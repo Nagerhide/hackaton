@@ -61,10 +61,25 @@
 
         <section id="healthPanel" aria-labelledby="healthTitle">
             <div class="health-header">
-                <h2 id="healthTitle">Panel zdrowia silnika</h2>
-                <select id="engineSelect" aria-label="Wybierz silnik"></select>
+                <div>
+                    <p class="panel-kicker">PODSUMOWANIE STANU</p>
+                    <h2 id="healthTitle">Panel zdrowia silnika</h2>
+                </div>
+                <label class="engine-control" for="engineSelect">
+                    <span>Wybierz silnik</span>
+                    <select id="engineSelect"></select>
+                </label>
             </div>
             <p id="healthSummary"></p>
+            <div id="healthMetrics" class="health-metrics" aria-label="Najważniejsze informacje o silniku"></div>
+            <div class="cylinder-guide" aria-label="Legenda stanów cylindrów">
+                <span><i class="guide-dot guide-ok"></i>Sprawny</span>
+                <span><i class="guide-dot guide-male"></i>Mała usterka</span>
+                <span><i class="guide-dot guide-srednie"></i>Średnia usterka</span>
+                <span><i class="guide-dot guide-duze"></i>Pilna usterka</span>
+                <span><i class="guide-dot guide-unknown"></i>Inna anomalia</span>
+                <small>Kliknij cylinder, aby zobaczyć prosty opis i wykres.</small>
+            </div>
             <div id="cylinderGrid" aria-label="Stan cylindrów"></div>
             <div id="cylinderDetails" aria-live="polite"></div>
         </section>

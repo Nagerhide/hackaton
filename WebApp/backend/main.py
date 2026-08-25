@@ -155,9 +155,35 @@ def extract_csv_from_zip(data: bytes) -> bytes:
         raise HTTPException(status_code=400, detail="Nieprawidłowe archiwum ZIP") from error
 
 
+async def read_uploaded_csv(file: UploadFile) -> bytes:
+    """Validate an uploaded CSV/ZIP and return its CSV bytes."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Nie podano nazwy pliku")
+
+    filename = file.filename.lower()
+    if not filename.endswith((".csv", ".zip")):
+        raise HTTPException(
+            status_code=400,
+            detail="Akceptowane są tylko pliki CSV lub ZIP zawierające jeden plik CSV",
+        )
+
+    data = await file.read()
+    if len(data) > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=400, detail="Plik musi być mniejszy niż 10 MB")
+    if not data:
+        raise HTTPException(status_code=400, detail="Plik jest pusty")
+    return extract_csv_from_zip(data) if filename.endswith(".zip") else data
+
+
 # ============================================================
 # API
 # ============================================================
+
+@app.post("/extract-csv")
+async def extract_csv(file: UploadFile = File(...)):
+    """Expose the CSV within an upload so ZIP files support the full UI."""
+    data = await read_uploaded_csv(file)
+    return Response(content=data, media_type="text/csv")
 
 @app.post("/predict")
 async def prediction(file: UploadFile = File(...)):
@@ -168,39 +194,7 @@ async def prediction(file: UploadFile = File(...)):
     # CHECK EXTENSION
     # --------------------------------------------------------
 
-    if not file.filename:
-        raise HTTPException(
-            status_code=400,
-            detail="Nie podano nazwy pliku"
-        )
-
-    filename = file.filename.lower()
-    if not filename.endswith((".csv", ".zip")):
-        raise HTTPException(
-            status_code=400,
-            detail="Akceptowane są tylko pliki CSV lub ZIP zawierające jeden plik CSV"
-        )
-
-    # --------------------------------------------------------
-    # READ FILE + SIZE LIMIT
-    # --------------------------------------------------------
-
-    data = await file.read()
-
-    if len(data) > MAX_UPLOAD_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail="Plik musi być mniejszy niż 10 MB"
-        )
-
-    if len(data) == 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Plik jest pusty"
-        )
-
-    if filename.endswith(".zip"):
-        data = extract_csv_from_zip(data)
+    data = await read_uploaded_csv(file)
 
     # --------------------------------------------------------
     # TEMPORARY FILE

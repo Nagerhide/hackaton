@@ -46,7 +46,7 @@ function createInteractiveWallpaper() {
                 context.beginPath();
                 context.moveTo(particle.x, particle.y);
                 context.lineTo(otherParticle.x, otherParticle.y);
-                context.strokeStyle = `rgba(22, 107, 77, ${0.12 * (1 - distance / connectionRange)})`;
+                context.strokeStyle = `rgba(22, 107, 77, ${0.22 * (1 - distance / connectionRange)})`;
                 context.lineWidth = 1;
                 context.stroke();
             });
@@ -75,7 +75,7 @@ function createInteractiveWallpaper() {
             const radius = particle.radius + influence * 6;
             context.beginPath();
             context.arc(particle.x, particle.y, radius, 0, Math.PI * 2);
-            context.fillStyle = `rgba(${particle.color}, ${0.15 + influence * 0.3})`;
+            context.fillStyle = `rgba(${particle.color}, ${0.28 + influence * 0.38})`;
             context.fill();
         });
 
@@ -125,6 +125,22 @@ const REFERENCE_SPECTRA = {
     pompa: [37.910444, 32.172, 23.974222, 18.038333, 31.225889, 41.654222, 47.700222, 49.646111, 49.899556, 48.363556, 45.06, 39.479111, 33.042889, 27.405444, 25.748778, 24.084, 26.091111, 30.586778, 33.979667, 31.193333, 27.893556]
 };
 
+// Severity-specific reference spectra averaged from tests/val.csv.
+const ANOMALY_REFERENCE_SPECTRA = {
+    "iglica:male": [36.874, 33.223286, 25.188429, 34.114429, 40.801429, 46.707, 47.738, 50.938571, 50.305143, 48.530143, 48.270286, 46.413714, 44.168571, 39.414714, 35.828286, 35.040429, 32.570857, 26.215429, 16.487, 14.487571, 18.773571],
+    "iglica:srednie": [37.411286, 34.882714, 25.623, 30.458286, 38.403571, 44.164571, 42.859143, 45.094, 44.097571, 41.709286, 42.947714, 42.904571, 41.738143, 36.219571, 31.372857, 29.905, 28.986714, 22.855, 15.483143, 15.333143, 17.025143],
+    "iglica:duze": [40.387, 46.9565, 34.839, 31.3095, 41.392, 43.623, 38.681, 42.3735, 40.957, 36.5295, 38.1365, 38.667, 37.614, 30.025, 20.498, 18.6415, 25.206, 26.8925, 27.7225, 25.4425, 23.127],
+    "zakoksowany:male": [35.1175, 30.726167, 22.067, 31.8895, 42.469667, 50.245667, 55.844833, 58.234, 55.733833, 46.534, 52.793833, 55.646, 53.891, 49.556667, 46.216, 42.886667, 40.578, 35.4905, 31.077, 35.235, 34.0065],
+    "zakoksowany:srednie": [32.435375, 26.8245, 29.235875, 33.28375, 44.23875, 51.41, 55.966, 56.81625, 52.364125, 39.949875, 50.43125, 56.159375, 55.405125, 51.38125, 48.391375, 46.168375, 45.1685, 44.398375, 43.138, 40.1475, 40.212875],
+    "zakoksowany:duze": [30.25175, 23.50825, 25.09725, 36.3335, 45.42175, 52.28275, 56.38275, 56.32175, 49.6425, 34.46725, 52.96125, 61.8435, 61.75, 57.49575, 54.64125, 53.20125, 51.5025, 46.689, 43.561, 40.25275, 40.79475],
+    "lejacy:male": [39.285667, 35.202667, 26.743333, 23.129667, 27.858667, 33.884, 40.985333, 45.11, 44.418333, 42.939, 39.438667, 31.533667, 24.83, 20.260333, 18.068, 16.879333, 18.103667, 19.518, 17.393667, 15.818667, 16.166333],
+    "lejacy:srednie": [39.163833, 33.4265, 19.296667, 23.1935, 26.194667, 29.920833, 36.577333, 38.8735, 36.5585, 34.668333, 32.337667, 27.5065, 24.281333, 21.406167, 19.589, 16.51, 13.572, 8.976833, 5.125167, 4.1855, 3.627667],
+    "lejacy:duze": [38.007, 35.9174, 22.147, 18.5896, 21.1666, 21.1696, 26.4982, 28.384, 25.1816, 22.7142, 21.523, 16.2482, 13.2706, 11.2702, 10.2064, 7.6856, 4.6936, 1.9162, 2.1374, 2.2148, 1.8044],
+    "pompa:male": [37.3095, 31.624, 24.839, 21.41775, 31.8255, 42.6725, 49.59125, 52.837, 53.2915, 52.10725, 48.15575, 39.72175, 30.82575, 24.47575, 22.853, 23.36225, 26.203, 32.0665, 38.10175, 35.93775, 33.36925],
+    "pompa:srednie": [37.30125, 32.18425, 23.69625, 15.1955, 32.182, 41.38325, 46.242, 47.16925, 47.52825, 45.9895, 43.236, 39.6885, 35.123, 30.003, 27.63375, 23.9465, 26.63, 32.4025, 35.65575, 30.0585, 26.981],
+    "pompa:duze": [42.751, 34.315, 21.627, 15.892, 25.003, 38.665, 45.969, 46.79, 45.817, 42.885, 39.973, 37.671, 33.591, 28.734, 29.792, 27.521, 23.488, 17.405, 10.787, 16.755, 9.641]
+};
+
 function parseCsv(text) {
     const rows = [];
     let row = [], field = "", quoted = false;
@@ -155,6 +171,34 @@ function parseCsv(text) {
 
     const [headers, ...values] = rows;
     return values.map(row => Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ""])));
+}
+
+function countMissingMeasurements(source) {
+    if (!source) return 0;
+    return Array.from({ length: 21 }, (_, index) => Number(source[`mV_${index}`]))
+        .filter(value => !Number.isFinite(value) || value === 0).length;
+}
+
+function cylinderStatusText(row) {
+    if (row.label === "ok") return "Sprawny";
+    if (row.label === "unknown") return "Inna anomalia";
+    return `${labelNames[row.label] || row.label} · ${severityNames[row.severity] || row.severity} nasilenie`;
+}
+
+async function readSourceCsv(file) {
+    if (file.name.toLowerCase().endsWith(".csv")) return file.text();
+
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await fetch("http://127.0.0.1:8000/extract-csv", {
+        method: "POST",
+        body: formData
+    });
+    if (!response.ok) {
+        const error = await response.text();
+        throw new Error(error || "Nie udało się odczytać pliku ZIP.");
+    }
+    return response.text();
 }
 
 function drawCylinderGraph(canvas, source, state, {
@@ -283,11 +327,83 @@ function drawCylinderGraph(canvas, source, state, {
     return true;
 }
 
+function enableGraphReadout(canvas, source, state, options, onPointHover) {
+    const values = Array.from({ length: 21 }, (_, index) => Number(source[`mV_${index}`]));
+    if (!values.some(value => Number.isFinite(value) && value !== 0)) return;
+
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    const padding = options.showScale
+        ? { left: 52, right: 52, top: 14, bottom: 28 }
+        : { left: 3, right: 3, top: 3, bottom: 3 };
+    const plotWidth = options.width - padding.left - padding.right;
+    const plotHeight = options.height - padding.top - padding.bottom;
+    const max = Math.max(
+        ...values.filter(value => Number.isFinite(value) && value !== 0),
+        ...(options.averageValues || []).filter(value => Number.isFinite(value) && value !== 0)
+    );
+
+    const drawHoverMarker = (index, pointerY) => {
+        drawCylinderGraph(canvas, source, state, options);
+        const context = canvas.getContext("2d");
+        const value = values[index];
+        const x = padding.left + (index / (values.length - 1)) * plotWidth;
+        const hasData = Number.isFinite(value) && value !== 0;
+        const y = hasData
+            ? options.height - padding.bottom - (value / max) * plotHeight
+            : Math.max(padding.top, Math.min(pointerY, options.height - padding.bottom));
+
+        context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        context.beginPath();
+        context.moveTo(x, padding.top);
+        context.lineTo(x, options.height - padding.bottom);
+        context.strokeStyle = "rgba(22, 107, 77, 0.42)";
+        context.lineWidth = 1;
+        context.setLineDash([4, 4]);
+        context.stroke();
+        context.setLineDash([]);
+        if (hasData) {
+            context.beginPath();
+            context.arc(x, y, 4.5, 0, Math.PI * 2);
+            context.fillStyle = "#ffffff";
+            context.fill();
+            context.lineWidth = 2.5;
+            context.strokeStyle = "#166b4d";
+            context.stroke();
+        }
+
+        const bounds = canvas.getBoundingClientRect();
+        onPointHover({
+            index,
+            value: hasData ? value : null,
+            referenceValue: options.averageValues?.[index],
+            x: (x / options.width) * bounds.width,
+            y: (y / options.height) * bounds.height
+        });
+    };
+
+    canvas.classList.add("interactive-graph");
+    canvas.addEventListener("pointermove", event => {
+        const bounds = canvas.getBoundingClientRect();
+        const graphX = (event.clientX - bounds.left) * (options.width / bounds.width);
+        const graphY = (event.clientY - bounds.top) * (options.height / bounds.height);
+        const estimatedIndex = Math.max(0, Math.min(
+            values.length - 1,
+            Math.round(((graphX - padding.left) / plotWidth) * (values.length - 1))
+        ));
+        drawHoverMarker(estimatedIndex, graphY);
+    });
+    canvas.addEventListener("pointerleave", () => {
+        drawCylinderGraph(canvas, source, state, options);
+        onPointHover(null);
+    });
+}
+
 
 function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
     const panel = document.getElementById("healthPanel");
     const engineSelect = document.getElementById("engineSelect");
     const summary = document.getElementById("healthSummary");
+    const metrics = document.getElementById("healthMetrics");
     const grid = document.getElementById("cylinderGrid");
     const details = document.getElementById("cylinderDetails");
     const sourceByCylinder = new Map(sourceRows.map(row => [`${row.engine_id}:${row.cylinder}`, row]));
@@ -308,12 +424,35 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
         const nCylinders = sourceByCylinder.get(`${engineId}:${cylinders[0]?.cylinder}`)?.n_cylinders || cylinders.length;
         const faulty = cylinders.filter(row => row.label !== "ok");
         const critical = cylinders.filter(row => row.severity === "duze").length;
+        const missingMeasurements = cylinders.reduce((total, row) => (
+            total + countMissingMeasurements(sourceByCylinder.get(`${row.engine_id}:${row.cylinder}`))
+        ), 0);
+        const faultWord = faulty.length === 1
+            ? "usterkę"
+            : faulty.length >= 2 && faulty.length <= 4 ? "usterki" : "usterek";
 
         summary.textContent = faulty.length === 0
-            ? `Silnik ${engineId} (${nCylinders} cylindrów): wszystkie cylindry są sprawne.`
-            : `Silnik ${engineId} (${nCylinders} cylindrów): wykryto ${faulty.length} usterek${critical ? `, w tym ${critical} o dużym nasileniu` : ""}.`;
+            ? `Silnik ${engineId}: wszystkie ${nCylinders} cylindrów są sprawne.`
+            : `Silnik ${engineId}: wykryto ${faulty.length} ${faultWord}${critical ? `, a ${critical} wymaga pilnej uwagi` : ""}.`;
+        const metricValues = [
+            { value: `${cylinders.length - faulty.length}/${cylinders.length}`, label: "sprawne cylindry", state: "ok" },
+            { value: faulty.length, label: "wykryte usterki", state: faulty.length ? "fault" : "ok" },
+            { value: critical, label: "pilne usterki", state: critical ? "critical" : "ok" },
+            { value: missingMeasurements, label: "brakujące odczyty", state: missingMeasurements ? "warning" : "ok" }
+        ];
+        metrics.replaceChildren(...metricValues.map(metric => {
+            const item = document.createElement("div");
+            const value = document.createElement("strong");
+            const label = document.createElement("span");
+            item.className = `health-metric ${metric.state}`;
+            value.textContent = metric.value;
+            label.textContent = metric.label;
+            item.append(value, label);
+            return item;
+        }));
         grid.replaceChildren();
         details.style.display = "none";
+        details.className = "cylinder-details";
 
         cylinders.forEach((row, index) => {
             const button = document.createElement("button");
@@ -321,23 +460,25 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
             const number = document.createElement("span");
             const label = document.createElement("span");
             const confidence = Number(row.confidence);
+            const statusText = cylinderStatusText(row);
             button.type = "button";
             button.className = `cylinder ${state}`;
+            button.setAttribute("aria-pressed", "false");
+            button.title = `Pokaż szczegóły: cylinder ${row.cylinder}, stan: ${statusText}`;
             button.style.animationDelay = `${index * 45}ms`;
             number.className = "cylinder-number";
             number.textContent = `Cylinder ${row.cylinder}`;
             label.className = "cylinder-label";
-            label.textContent = labelNames[row.label] || row.label;
+            label.textContent = statusText;
             button.append(number, label);
             const source = sourceByCylinder.get(`${row.engine_id}:${row.cylinder}`);
             if (source) {
-                const skippedMeasurements = Array.from({ length: 21 }, (_, index) => Number(source[`mV_${index}`]))
-                    .filter(value => !Number.isFinite(value) || value === 0).length;
+                const skippedMeasurements = countMissingMeasurements(source);
                 if (skippedMeasurements >= 3) {
                     const warning = document.createElement("span");
                     warning.className = "cylinder-warning";
                     warning.textContent = "!";
-                    warning.title = `Pominięte pomiary: ${skippedMeasurements}`;
+                    warning.title = `Uwaga: brakuje ${skippedMeasurements} odczytów. Wynik może być mniej wiarygodny.`;
                     warning.setAttribute("aria-label", warning.title);
                     button.append(warning);
                 }
@@ -349,10 +490,23 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
             if (Number.isFinite(confidence)) {
                 const confidenceLabel = document.createElement("span");
                 confidenceLabel.className = "cylinder-confidence";
-                confidenceLabel.textContent = `Pewność: ${(confidence * 100).toFixed(0)}%`;
+                confidenceLabel.textContent = `Pewność oceny: ${(confidence * 100).toFixed(0)}%`;
                 button.append(confidenceLabel);
             }
             button.addEventListener("click", () => {
+                if (button.classList.contains("selected") && details.style.display === "block") {
+                    button.classList.remove("selected");
+                    button.setAttribute("aria-pressed", "false");
+                    details.style.display = "none";
+                    return;
+                }
+                grid.querySelectorAll(".cylinder").forEach(cylinder => {
+                    cylinder.classList.remove("selected");
+                    cylinder.setAttribute("aria-pressed", "false");
+                });
+                button.classList.add("selected");
+                button.setAttribute("aria-pressed", "true");
+                details.className = `cylinder-details ${state}`;
                 const source = sourceByCylinder.get(`${row.engine_id}:${row.cylinder}`);
                 const createParameterSection = (title, parameters) => {
                     const section = document.createElement("section");
@@ -366,7 +520,15 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                         const name = document.createElement("dt");
                         const parameterValue = document.createElement("dd");
                         const confidence = key === "confidence" ? Number(value) : null;
-                        name.textContent = key === "confidence" ? "Pewność modelu" : key;
+                        const readableNames = {
+                            confidence: "Pewność oceny modelu",
+                            label: "Rozpoznany problem",
+                            severity: "Nasilenie problemu",
+                            engine_id: "Identyfikator silnika",
+                            cylinder: "Numer cylindra",
+                            n_cylinders: "Liczba cylindrów"
+                        };
+                        name.textContent = readableNames[key] || key.replace("_", " ");
                         parameterValue.textContent = confidence != null && Number.isFinite(confidence)
                             ? `${(confidence * 100).toFixed(1)}%`
                             : (value === "" || value == null ? "—" : value);
@@ -386,53 +548,117 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                 prediction.severity = severityNames[row.severity] || row.severity;
 
                 title.className = "cylinder-details-title";
-                title.textContent = `Cylinder ${row.cylinder} — wszystkie dostępne parametry`;
+                title.textContent = `Szczegóły cylindra ${row.cylinder}`;
                 details.replaceChildren(title);
+                const missingMeasurements = countMissingMeasurements(source);
+                const overview = {
+                    "Stan cylindra": row.label === "ok" ? "Sprawny" : "Wymaga sprawdzenia",
+                    "Co wykryto": row.label === "ok"
+                        ? "Nie wykryto problemu"
+                        : (labelNames[row.label] || row.label),
+                    "Pilność": row.label === "ok"
+                        ? "Brak"
+                        : (severityNames[row.severity] || row.severity),
+                    "Pewność oceny": Number.isFinite(confidence)
+                        ? `${(confidence * 100).toFixed(1)}%`
+                        : "Brak danych",
+                    "Brakujące odczyty": `${missingMeasurements} z 21`
+                };
+                const detailsLayout = document.createElement("div");
+                const detailsSummary = document.createElement("div");
+                const detailsVisual = document.createElement("div");
+                detailsLayout.className = "cylinder-details-layout";
+                detailsSummary.className = "cylinder-details-summary";
+                detailsVisual.className = "cylinder-details-visual";
+                detailsSummary.append(createParameterSection("Najważniejsze informacje", overview));
+                let measurementSection;
                 if (source) {
                     const measurementParameters = { ...source };
                     delete measurementParameters.label;
                     delete measurementParameters.severity;
-                    measurementParameters["Pominięte pomiary"] = Array.from(
-                        { length: 21 },
-                        (_, index) => Number(source[`mV_${index}`])
-                    ).filter(value => !Number.isFinite(value) || value === 0).length;
+                    measurementParameters["Brakujące odczyty"] = missingMeasurements;
                     const graphSection = document.createElement("section");
                     const graphTitle = document.createElement("h3");
                     const graphLegend = document.createElement("p");
+                    const graphWrap = document.createElement("div");
                     const graph = document.createElement("canvas");
+                    const graphTooltip = document.createElement("output");
                     const cylinderType = isValidationFile && source.label ? source.label : row.label;
-                    const referenceSpectrum = REFERENCE_SPECTRA[cylinderType] || null;
+                    const cylinderSeverity = isValidationFile && source.severity
+                        ? source.severity
+                        : row.severity;
+                    const referenceSpectrum = ANOMALY_REFERENCE_SPECTRA[
+                        `${cylinderType}:${cylinderSeverity}`
+                    ] || REFERENCE_SPECTRA[cylinderType] || null;
                     graphSection.className = "cylinder-details-section";
                     graphTitle.textContent = "Widmo akustyczne cylindra";
                     graphLegend.className = "graph-legend";
-                    graphLegend.textContent = `Linia przerywana: średnie widmo referencyjne typu „${labelNames[cylinderType] || cylinderType}” z val.csv.`;
+                    graphLegend.textContent = cylinderType === "ok"
+                        ? "Linia przerywana pokazuje typowy przebieg dla sprawnego cylindra."
+                        : "Linia przerywana pokazuje typowy przebieg dla podobnej usterki.";
                     graph.className = "cylinder-details-graph";
                     graph.setAttribute("role", "img");
-                    graph.setAttribute("aria-label", `Wykres widma akustycznego cylindra ${row.cylinder}`);
+                    graph.setAttribute("aria-label", `Wykres widma akustycznego cylindra ${row.cylinder}. Najedź kursorem na wykres, aby odczytać wartość punktu.`);
+                    graphWrap.className = "cylinder-details-graph-wrap";
+                    graphTooltip.className = "graph-tooltip";
+                    graphTooltip.setAttribute("aria-live", "polite");
+                    graphTooltip.textContent = "Najedź na wykres";
+                    graphWrap.append(graph, graphTooltip);
                     graphSection.append(graphTitle);
                     if (referenceSpectrum) graphSection.append(graphLegend);
-                    graphSection.append(graph);
-                    details.append(graphSection, createParameterSection("Parametry pomiarowe", measurementParameters));
+                    graphSection.append(graphWrap);
+                    measurementSection = createParameterSection("Pomiary techniczne", measurementParameters);
+                    detailsVisual.append(graphSection);
                     requestAnimationFrame(() => {
                         const graphBounds = graph.getBoundingClientRect();
-                        drawCylinderGraph(graph, source, state, {
+                        const graphOptions = {
                             width: Math.round(graphBounds.width),
                             height: Math.round(graphBounds.height),
                             showScale: true,
                             averageValues: referenceSpectrum
+                        };
+                        drawCylinderGraph(graph, source, state, graphOptions);
+                        enableGraphReadout(graph, source, state, graphOptions, point => {
+                            if (!point) {
+                                graphTooltip.classList.remove("visible");
+                                return;
+                            }
+                            const tooltipX = Math.max(72, Math.min(point.x, graphBounds.width - 72));
+                            const tooltipY = Math.max(34, point.y);
+                            const referenceText = Number.isFinite(point.referenceValue) && point.referenceValue !== 0
+                                ? ` · wzorzec: ${point.referenceValue.toFixed(1)} mV`
+                                : "";
+                            graphTooltip.textContent = Number.isFinite(point.value)
+                                ? `mV_${point.index}: ${point.value.toFixed(1)} mV${referenceText}`
+                                : `mV_${point.index}: Brak danych${referenceText}`;
+                            graphTooltip.style.left = `${tooltipX}px`;
+                            graphTooltip.style.top = `${tooltipY}px`;
+                            graphTooltip.classList.add("visible");
                         });
                     });
                     if (isValidationFile) {
-                        details.append(createParameterSection("Prawidłowy wynik z tabeli", {
+                        detailsSummary.append(createParameterSection("Wynik podany w pliku", {
                             label: labelNames[source.label] || source.label,
                             severity: severityNames[source.severity] || source.severity
                         }));
                     }
                 }
-                details.append(createParameterSection(
-                    isValidationFile ? "Wynik modelu" : "Wynik predykcji",
+                detailsSummary.append(createParameterSection(
+                    "Ocena modelu",
                     prediction
                 ));
+                detailsLayout.append(detailsSummary);
+                if (detailsVisual.childElementCount) detailsLayout.append(detailsVisual);
+                details.append(detailsLayout);
+                if (measurementSection) {
+                    const measurements = document.createElement("details");
+                    const measurementsSummary = document.createElement("summary");
+                    measurements.className = "technical-measurements";
+                    measurementsSummary.textContent = "Pokaż szczegółowe odczyty techniczne";
+                    measurementSection.querySelector("h3").textContent = "Odczyty mV";
+                    measurements.append(measurementsSummary, measurementSection);
+                    details.append(measurements);
+                }
                 details.style.display = "block";
             });
             grid.append(button);
@@ -508,6 +734,7 @@ function renderEngineRanking(predictions, sourceRows) {
     const panel = document.getElementById("engineRankingPanel");
     const ranking = document.getElementById("engineRanking");
     const details = document.getElementById("engineRankingDetails");
+    const title = document.getElementById("engineRankingTitle");
     const severityScore = { male: 1, srednie: 2, duze: 3, nie_dotyczy: 0 };
     const sourceByCylinder = new Map(sourceRows.map(row => [`${row.engine_id}:${row.cylinder}`, row]));
     const engines = [...new Set(predictions.map(row => row.engine_id))].map(engineId => {
@@ -524,13 +751,16 @@ function renderEngineRanking(predictions, sourceRows) {
             engineId,
             faultCount: faults.length,
             skippedMeasurements,
-            score: faultRisk + skippedMeasurements
+            score: faultRisk + Math.floor(skippedMeasurements/3)
         };
     }).sort((first, second) =>
         first.score - second.score || first.faultCount - second.faultCount || first.engineId.localeCompare(second.engineId)
     );
 
     const worstEngines = engines.reverse().slice(0, 10);
+    title.textContent = worstEngines.length === 1
+        ? "Najgorszy silnik"
+        : `Najgorsze ${worstEngines.length} silników`;
     ranking.replaceChildren();
     details.style.display = "none";
 
@@ -619,12 +849,6 @@ previewButton.addEventListener("click", async function () {
         return;
     }
 
-    if (!file.name.toLowerCase().endsWith(".csv")) {
-        status.textContent = "Podgląd jest dostępny tylko dla plików CSV.";
-        previewPanel.style.display = "none";
-        return;
-    }
-
     if (file.size > MAX_FILE_SIZE) {
         status.textContent = "Plik musi być mniejszy niż 10 MB.";
         previewPanel.style.display = "none";
@@ -632,11 +856,9 @@ previewButton.addEventListener("click", async function () {
     }
 
     try {
-        let text = await file.slice(0, 1000).text();
-        if(file.length >= 1001){
-            text.append("...")
-        }
-        preview.textContent = text || "Plik jest pusty.";
+        const fullText = await readSourceCsv(file);
+        const text = fullText.slice(0, 1000);
+        preview.textContent = `${text}${fullText.length > 1000 ? "\n..." : ""}` || "Plik jest pusty.";
         previewPanel.style.display = "block";
         status.textContent = `Podgląd pliku: ${file.name}`;
     } catch (error) {
@@ -718,10 +940,11 @@ button.addEventListener("click", async function () {
         console.log("RECEIVED TYPE:", blob.type);
 
         const text = await blob.text();
-        const [predictions, sourceRows] = await Promise.all([
+        const [predictions, sourceText] = await Promise.all([
             Promise.resolve(parseCsv(text)),
-            file.name.toLowerCase().endsWith(".csv") ? file.text().then(parseCsv) : Promise.resolve([])
+            readSourceCsv(file)
         ]);
+        const sourceRows = parseCsv(sourceText);
         const isValidationFile = sourceRows.some(row =>
             Object.prototype.hasOwnProperty.call(row, "label")
             && Object.prototype.hasOwnProperty.call(row, "severity")

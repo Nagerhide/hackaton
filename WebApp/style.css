@@ -69,9 +69,9 @@ body {
 .card > * { position: relative; z-index: 1; }
 
 .brand-header { display: flex; align-items: center; justify-content: center; gap: 1.25rem; margin-bottom: 2rem; animation: fade-in 0.7s 0.15s ease-out both; }
-.brand-logo-frame { width: 156px; height: 86px; overflow: hidden; flex: 0 0 auto; border: 1px solid rgba(30, 169, 122, 0.16); border-radius: 16px; background: rgba(255, 255, 255, 0.72); box-shadow: 0 12px 24px rgba(22, 107, 77, 0.1); }
-.brand-logo { display: block; width: 100%; height: 100%; object-fit: cover; transform: scale(2.05); transition: transform 0.4s ease; }
-.brand-logo-frame:hover .brand-logo { transform: scale(2.17) rotate(-1deg); }
+.brand-logo-frame { width: 230px; height: 130px; overflow: hidden; flex: 0 0 auto; border: 1px solid rgba(30, 169, 122, 0.3); border-radius: 20px; background: rgba(255, 255, 255, 0.96); box-shadow: 0 14px 28px rgba(22, 107, 77, 0.16), inset 0 0 0 1px rgba(255, 255, 255, 0.9); }
+.brand-logo { display: block; width: 100%; height: 100%; object-fit: cover; transform: scale(1.72); transition: transform 0.4s ease; }
+.brand-logo-frame:hover .brand-logo { transform: scale(1.82) rotate(-1deg); }
 .eyebrow { margin: 0 0 0.35rem; color: var(--green-700); font-size: 0.7rem; font-weight: 800; letter-spacing: 0.12em; }
 .title { margin: 0 0 0.5rem; font-size: clamp(1.8rem, 3vw, 2.5rem); letter-spacing: -0.045em; color: var(--green-900); }
 .subtitle { margin: 0; color: var(--muted); line-height: 1.5; }
@@ -175,15 +175,31 @@ input[type="file"]::file-selector-button:hover { background: rgba(76, 211, 163, 
     background: linear-gradient(135deg, rgba(30, 169, 122, 0.12), rgba(245, 158, 11, 0.14));
 }
 
-#healthPanel { display: none; margin-top: 1.5rem; padding: 1.25rem; border: 1px solid var(--border); border-radius: 20px; background: rgba(255, 255, 255, 0.68); box-shadow: 0 10px 28px rgba(22, 107, 77, 0.06); animation: panel-reveal 0.5s ease-out both; }
+#healthPanel { display: none; margin-top: 1.5rem; padding: clamp(1rem, 2vw, 1.5rem); border: 1px solid rgba(30, 169, 122, 0.18); border-radius: 22px; background: linear-gradient(135deg, rgba(255, 255, 255, 0.86), rgba(237, 255, 247, 0.66)); box-shadow: 0 12px 30px rgba(22, 107, 77, 0.08); animation: panel-reveal 0.5s ease-out both; }
 .health-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
-.health-header h2 { margin: 0; color: var(--green-900); font-size: 1.25rem; }
-#engineSelect { max-width: 100%; padding: 0.55rem 0.7rem; border: 1px solid var(--border); border-radius: 8px; background: white; color: var(--text); }
-#healthSummary { margin: 1rem 0; color: var(--muted); line-height: 1.45; }
-#cylinderGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 0.7rem; }
+.panel-kicker { margin: 0 0 0.3rem; color: var(--green-700); font-size: 0.67rem; font-weight: 800; letter-spacing: 0.1em; }
+.health-header h2 { margin: 0; color: var(--green-900); font-size: clamp(1.2rem, 2vw, 1.45rem); letter-spacing: -0.02em; }
+.engine-control { display: grid; gap: 0.32rem; color: var(--muted); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.03em; }
+#engineSelect { min-width: 175px; max-width: 100%; min-height: 42px; padding: 0.62rem 2.1rem 0.62rem 0.75rem; border: 1px solid rgba(22, 107, 77, 0.2); border-radius: 10px; color: var(--green-900); font: inherit; font-weight: 700; letter-spacing: normal; background: rgba(255, 255, 255, 0.92); box-shadow: 0 3px 8px rgba(22, 107, 77, 0.06); cursor: pointer; }
+#engineSelect:focus-visible { outline: 3px solid rgba(76, 211, 163, 0.35); outline-offset: 2px; }
+#healthSummary { margin: 1.1rem 0 0.8rem; color: var(--text); font-weight: 600; line-height: 1.5; }
+.health-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.55rem; }
+.health-metric { min-width: 0; padding: 0.7rem 0.75rem; border: 1px solid rgba(22, 107, 77, 0.08); border-radius: 12px; background: rgba(255, 255, 255, 0.72); }
+.health-metric strong { display: block; color: var(--green-900); font-size: 1.15rem; line-height: 1.15; }
+.health-metric span { display: block; margin-top: 0.26rem; color: var(--muted); font-size: 0.7rem; font-weight: 700; line-height: 1.25; }
+.health-metric.fault strong { color: #c2410c; }
+.health-metric.critical strong { color: #b91c1c; }
+.health-metric.warning strong { color: #a16207; }
+.cylinder-guide { display: flex; align-items: center; gap: 0.55rem 0.85rem; flex-wrap: wrap; margin: 1rem 0; padding: 0.65rem 0.75rem; border-radius: 11px; color: var(--muted); font-size: 0.72rem; background: rgba(255, 255, 255, 0.5); }
+.cylinder-guide span { display: inline-flex; align-items: center; gap: 0.32rem; white-space: nowrap; }
+.cylinder-guide small { margin-left: auto; font-size: inherit; font-weight: 700; }
+.guide-dot { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%; }
+.guide-ok { background: #4cd3a3; }.guide-male { background: #fbbf24; }.guide-srednie { background: #f59e0b; }.guide-duze { background: #ef4444; }.guide-unknown { background: #8b7cf6; }
+#cylinderGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 0.6rem; }
 
-.cylinder { position: relative; min-height: 134px; padding: 0.65rem; border: 2px solid transparent; border-radius: 14px; color: var(--text); text-align: left; cursor: pointer; box-shadow: 0 2px 0 rgba(22, 107, 77, 0.04); transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease; animation: cylinder-enter 0.38s both; }
+.cylinder { position: relative; min-height: 124px; padding: 0.65rem; border: 2px solid transparent; border-radius: 14px; color: var(--text); text-align: left; cursor: pointer; box-shadow: 0 2px 0 rgba(22, 107, 77, 0.04); transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease, border-color 0.18s ease; animation: cylinder-enter 0.38s both; }
 .cylinder:hover, .cylinder:focus-visible { transform: translateY(-4px) scale(1.015); box-shadow: 0 10px 18px rgba(22, 107, 77, 0.18); filter: saturate(1.12); outline: none; }
+.cylinder.selected { border-color: var(--green-900); box-shadow: 0 0 0 3px rgba(30, 169, 122, 0.2), 0 10px 18px rgba(22, 107, 77, 0.16); transform: translateY(-3px); }
 .cylinder.ok { background: #dff7ec; border-color: #4cd3a3; }
 .cylinder.male { background: #fff3cc; border-color: #fbbf24; }
 .cylinder.srednie { background: #ffe0b2; border-color: #f59e0b; }
@@ -191,23 +207,41 @@ input[type="file"]::file-selector-button:hover { background: rgba(76, 211, 163, 
 .cylinder.unknown { background: #e9e7ff; border-color: #8b7cf6; }
 .cylinder.duze { animation: alert-pulse 1.8s ease-in-out infinite; }
 .cylinder-number { display: block; font-weight: 700; }
-.cylinder-label { display: block; margin-top: 0.35rem; font-size: 0.78rem; }
-.cylinder-graph { display: block; width: 100%; height: 46px; margin-top: 0.45rem; opacity: 0.9; transition: opacity 0.18s ease, transform 0.18s ease; }
+.cylinder-label { display: block; min-height: 2.25em; margin-top: 0.35rem; font-size: 0.76rem; font-weight: 700; line-height: 1.2; }
+.cylinder-graph { display: block; width: 100%; height: 36px; margin-top: 0.35rem; opacity: 0.9; transition: opacity 0.18s ease, transform 0.18s ease; }
 .cylinder:hover .cylinder-graph { opacity: 1; transform: scaleY(1.08); }
-.cylinder-confidence { display: block; margin-top: 0.45rem; color: var(--muted); font-size: 0.7rem; font-weight: 700; }
+.cylinder-confidence { display: block; margin-top: 0.45rem; color: var(--muted); font-size: 0.68rem; font-weight: 700; }
 .cylinder-warning { position: absolute; top: 0.42rem; right: 0.42rem; display: grid; width: 1.15rem; height: 1.15rem; place-items: center; border-radius: 50%; color: white; font-size: 0.8rem; font-weight: 900; background: #dc2626; box-shadow: 0 2px 7px rgba(220, 38, 38, 0.32); }
 
-#cylinderDetails { display: none; margin-top: 1rem; padding: 1rem; border-left: 4px solid var(--green-700); border-radius: 8px; background: rgba(76, 211, 163, 0.1); line-height: 1.45; }
+#cylinderDetails { display: none; margin-top: 1rem; padding: clamp(1rem, 2vw, 1.35rem); border-left: 4px solid var(--green-700); border-radius: 12px; background: rgba(76, 211, 163, 0.1); box-shadow: inset 0 1px rgba(255, 255, 255, 0.58); line-height: 1.45; }
+#cylinderDetails.ok { border-left-color: #4cd3a3; background: rgba(76, 211, 163, 0.14); }
+#cylinderDetails.male { border-left-color: #fbbf24; background: rgba(251, 191, 36, 0.18); }
+#cylinderDetails.srednie { border-left-color: #f59e0b; background: rgba(245, 158, 11, 0.16); }
+#cylinderDetails.duze { border-left-color: #ef4444; background: rgba(239, 68, 68, 0.13); }
+#cylinderDetails.unknown { border-left-color: #8b7cf6; background: rgba(139, 124, 246, 0.14); }
 .cylinder-details-title { margin: 0 0 0.7rem; color: var(--green-900); font-size: 1rem; }
+.cylinder-details-layout { display: grid; grid-template-columns: minmax(240px, 0.82fr) minmax(0, 1.45fr); gap: 1rem; align-items: start; }
+.cylinder-details-summary { display: grid; gap: 0.85rem; }
+.cylinder-details-summary .cylinder-details-section + .cylinder-details-section { margin-top: 0; }
+.cylinder-details-visual { min-width: 0; }
 .cylinder-details-section + .cylinder-details-section { margin-top: 0.85rem; }
 .cylinder-details-section h3 { margin: 0 0 0.45rem; font-size: 0.9rem; color: var(--muted); }
 .graph-legend { margin: -0.1rem 0 0.55rem; color: var(--muted); font-size: 0.78rem; }
 .graph-legend::before { display: inline-block; width: 1.6rem; margin-right: 0.4rem; border-top: 2px dashed rgba(31, 41, 55, 0.72); content: ""; vertical-align: middle; }
-.cylinder-details-graph { display: block; width: 100%; height: clamp(300px, 55vw, 480px); border: 1px solid rgba(22, 107, 77, 0.1); border-radius: 10px; background: linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(76, 211, 163, 0.04)); }
+.cylinder-details-graph-wrap { position: relative; }
+.cylinder-details-graph { display: block; width: 100%; height: clamp(240px, 28vw, 330px); border: 1px solid rgba(22, 107, 77, 0.1); border-radius: 10px; background: linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(76, 211, 163, 0.04)); }
+.interactive-graph { cursor: crosshair; }
+.graph-tooltip { position: absolute; z-index: 2; padding: 0.38rem 0.55rem; border-radius: 7px; color: white; font-size: 0.75rem; font-weight: 800; white-space: nowrap; pointer-events: none; background: rgba(22, 107, 77, 0.94); box-shadow: 0 5px 12px rgba(22, 107, 77, 0.2); opacity: 0; transform: translate(-50%, calc(-100% - 0.45rem)); transition: opacity 0.12s ease; }
+.graph-tooltip.visible { opacity: 1; }
 .cylinder-parameters { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.45rem; margin: 0; }
 .cylinder-parameters div { padding: 0.45rem 0.55rem; border-radius: 7px; background: rgba(255, 255, 255, 0.62); }
 .cylinder-parameters dt { color: var(--muted); font-size: 0.76rem; overflow-wrap: anywhere; }
 .cylinder-parameters dd { margin: 0.12rem 0 0; color: var(--text); font-weight: 700; overflow-wrap: anywhere; }
+.technical-measurements { margin-top: 0.85rem; border: 1px solid rgba(22, 107, 77, 0.13); border-radius: 10px; background: rgba(255, 255, 255, 0.5); }
+.technical-measurements > summary { padding: 0.72rem 0.85rem; color: var(--green-900); font-size: 0.82rem; font-weight: 800; cursor: pointer; }
+.technical-measurements[open] > summary { border-bottom: 1px solid rgba(22, 107, 77, 0.1); }
+.technical-measurements .cylinder-details-section { padding: 0.85rem; }
+.technical-measurements .cylinder-details-section h3 { margin-top: 0; }
 
 #engineRankingPanel {
     display: none;
@@ -221,14 +255,14 @@ input[type="file"]::file-selector-button:hover { background: rgba(76, 211, 163, 
 }
 
 #engineRankingPanel h2 { margin: 0; color: var(--green-900); font-size: 1.25rem; }
-#engineRanking { display: grid; gap: 0.55rem; margin-top: 1rem; }
+#engineRanking { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.55rem; margin-top: 1rem; }
 .engine-rating { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 0.75rem; width: 100%; padding: 0.85rem 1rem; border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 12px; color: var(--text); text-align: left; cursor: pointer; background: linear-gradient(90deg, rgba(255, 224, 224, 0.9), rgba(255, 255, 255, 0.76)); transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
 .engine-rating:hover, .engine-rating:focus-visible, .engine-rating.active { border-color: #ef4444; box-shadow: 0 7px 16px rgba(239, 68, 68, 0.13); outline: none; transform: translateX(3px); }
 .engine-rank { display: grid; width: 1.9rem; height: 1.9rem; place-items: center; border-radius: 50%; color: #b91c1c; font-size: 0.82rem; font-weight: 800; background: rgba(239, 68, 68, 0.12); }
 .engine-rating strong { display: block; }
 .engine-rating span { color: var(--muted); font-size: 0.82rem; }
 .engine-risk { color: #b91c1c !important; font-weight: 800; white-space: nowrap; }
-#engineRankingDetails { display: none; margin-top: 1rem; padding: 1rem; border-left: 4px solid #ef4444; border-radius: 8px; background: rgba(255, 224, 224, 0.56); animation: fade-in 0.25s ease-out both; }
+#engineRankingDetails { display: none; grid-column: 1 / -1; margin-top: 0.2rem; padding: 1rem; border-left: 4px solid #ef4444; border-radius: 8px; background: rgba(255, 224, 224, 0.56); animation: fade-in 0.25s ease-out both; }
 .engine-ranking-details-title { margin: 0 0 0.7rem; color: #991b1b; font-size: 1rem; }
 .engine-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 0.5rem; margin: 0; }
 .engine-stat-grid div { padding: 0.55rem 0.65rem; border-radius: 8px; background: rgba(255, 255, 255, 0.72); }
@@ -237,6 +271,13 @@ input[type="file"]::file-selector-button:hover { background: rgba(76, 211, 163, 
 
 @media (max-width: 560px) {
     .brand-header { flex-direction: column; gap: 0.35rem; text-align: center; }
+    .health-header { align-items: stretch; }
+    .engine-control { width: 100%; }
+    #engineSelect { width: 100%; min-height: 44px; }
+    .health-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cylinder-guide small { width: 100%; margin-left: 0; }
+    .cylinder-details-layout { grid-template-columns: 1fr; }
+    .cylinder-details-graph { height: min(64vw, 300px); min-height: 220px; }
     #engineRanking { grid-template-columns: 1fr; }
 }
 
