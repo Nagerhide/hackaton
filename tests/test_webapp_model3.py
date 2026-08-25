@@ -26,17 +26,18 @@ class InMemoryUpload:
 
 
 class WebAppModelSelectionTests(unittest.TestCase):
-    def test_health_reports_both_models_and_model2_as_default(self):
+    def test_health_reports_three_models_and_model2_as_default(self):
         health = main.health_check()
 
         self.assertEqual(health["status"], "ok")
         self.assertEqual(health["service"], "piher2-prediction-api")
         self.assertEqual(health["version"], "4.0")
         self.assertEqual(health["default_model"], "model2")
+        self.assertTrue(health["models"]["model1"]["ready"])
         self.assertTrue(health["models"]["model2"]["ready"])
         self.assertTrue(health["models"]["model3"]["ready"])
 
-    def test_uploaded_csv_uses_model2_by_default_and_allows_model3(self):
+    def test_uploaded_csv_uses_model2_by_default_and_allows_model1_and_model3(self):
         frame = pd.read_csv(main.PROJECT_DIR / "tests" / "test.csv")
         engine = frame[frame.engine_id.eq("test_0049")]
         content = engine.to_csv(index=False).encode()
@@ -45,6 +46,11 @@ class WebAppModelSelectionTests(unittest.TestCase):
             default_response = asyncio.run(
                 main.run_prediction(InMemoryUpload("engine.csv", content))
             )
+            model1_response = asyncio.run(
+                main.run_prediction(
+                    InMemoryUpload("engine.csv", content), model_name="model1"
+                )
+            )
             model3_response = asyncio.run(
                 main.run_prediction(
                     InMemoryUpload("engine.csv", content), model_name="model3"
@@ -52,7 +58,9 @@ class WebAppModelSelectionTests(unittest.TestCase):
             )
 
         self.assertEqual(default_response["selected_model"], "model2")
+        self.assertEqual(model1_response["selected_model"], "model1")
         self.assertEqual(model3_response["selected_model"], "model3")
+        self.assertEqual(len(model1_response["results"]), len(engine))
         self.assertEqual(default_response["input_rows"], len(engine))
         self.assertEqual(len(model3_response["results"]), len(engine))
         self.assertEqual(model3_response["model_votes"], 51)

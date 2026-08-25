@@ -10,6 +10,7 @@ import sys
 import zipfile
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
@@ -36,11 +37,17 @@ if str(PROJECT_DIR) not in sys.path:
 
 from model2 import predict as model2_predict  # noqa: E402
 from model3 import predict as model3_predict  # noqa: E402
+from WebApp.backend.model1_adapter import predict as model1_predict  # noqa: E402
 from WebApp.backend.store import AppStore, StoreError  # noqa: E402
 
 
 DEFAULT_MODEL = "model2"
 MODEL_CONFIGS = {
+    "model1": {
+        "predict": model1_predict,
+        "classifier": WEBAPP_DIR / "backend" / "acoustic_model.pkl",
+        "explainer": None,
+    },
     "model2": {
         "predict": model2_predict,
         "classifier": MODEL_DIR / "acoustic_model2.pkl",
@@ -104,6 +111,7 @@ class TodoCreateRequest(BaseModel):
     note: str = Field(default="", max_length=1000)
     status: str = "todo"
     spectrum: list[float | None] = Field(default_factory=list, max_length=21)
+    engine_snapshot: dict[str, Any] | None = None
 
 
 class TodoUpdateRequest(BaseModel):
@@ -112,6 +120,7 @@ class TodoUpdateRequest(BaseModel):
     severity: str | None = None
     note: str | None = Field(default=None, max_length=1000)
     status: str | None = None
+    engine_snapshot: dict[str, Any] | None = None
 
 
 def store_result(function, *args, **kwargs):
@@ -132,6 +141,12 @@ def bearer_token(authorization: str | None = Header(default=None)) -> str:
 
 def current_user(token: str = Depends(bearer_token)) -> dict:
     return store_result(STORE.user_for_token, token)
+
+
+def model_artifacts_ready(config: dict) -> bool:
+    classifier_ready = config["classifier"].is_file()
+    explainer = config.get("explainer")
+    return classifier_ready and (explainer is None or explainer.is_file())
 
 
 def extract_csv_from_zip(data: bytes) -> bytes:
@@ -232,7 +247,7 @@ async def run_prediction(
             status_code=422,
             detail=f"Nieznany model. Dostępne: {', '.join(MODEL_CONFIGS)}.",
         )
-    if not model_config["classifier"].is_file() or not model_config["explainer"].is_file():
+    if not model_artifacts_ready(model_config):
         raise HTTPException(
             status_code=503,
             detail=f"Artefakty {model_name} nie są dostępne.",
@@ -242,7 +257,7 @@ async def run_prediction(
             model_config["predict"],
             frame,
             classifier_path=model_config["classifier"],
-            explainer_path=model_config["explainer"],
+            explainer_path=model_config.get("explainer"),
             include_bands=include_bands,
             display=False,
         )
@@ -266,9 +281,9 @@ async def run_prediction(
 def health_check() -> dict:
     models = {
         name: {
-            "ready": config["classifier"].is_file() and config["explainer"].is_file(),
+            "ready": model_artifacts_ready(config),
             "model": config["classifier"].name,
-            "explainer": config["explainer"].name,
+            "explainer": config["explainer"].name if config.get("explainer") else None,
         }
         for name, config in MODEL_CONFIGS.items()
     }

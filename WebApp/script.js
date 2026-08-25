@@ -17,6 +17,8 @@ let todoFilter = "all";
 let todoEditorContext = null;
 let activeModelName = "model2";
 let diagnosticNavigator = null;
+let diagnosticPredictions = [];
+let diagnosticSourceRows = [];
 
 function apiUrl(path) {
     return `${API_BASE_URL}${path}`;
@@ -1362,6 +1364,8 @@ button.addEventListener("click", async function () {
 
     status.textContent = "Przetwarzanie...";
     diagnosticNavigator = null;
+    diagnosticPredictions = [];
+    diagnosticSourceRows = [];
     download.style.display = "none";
     healthPanel.style.display = "none";
     engineRankingPanel.style.display = "none";
@@ -1389,6 +1393,8 @@ button.addEventListener("click", async function () {
         const predictions = payload.results;
         const sourceText = await readSourceCsv(file);
         const sourceRows = parseCsv(sourceText);
+        diagnosticPredictions = predictions;
+        diagnosticSourceRows = sourceRows;
         const isValidationFile = sourceRows.some(row =>
             Object.prototype.hasOwnProperty.call(row, "label")
             && Object.prototype.hasOwnProperty.call(row, "severity")
@@ -1421,6 +1427,9 @@ button.addEventListener("click", async function () {
         renderHealthPanel(predictions, sourceRows, isValidationFile);
         renderEngineRanking(predictions, sourceRows);
         renderFaultChart(predictions);
+        persistEngineSnapshotsForExistingTodos().catch(error => {
+            console.warn("Nie udało się uzupełnić starszych snapshotów silników:", error);
+        });
 
         const voteInfo = payload.model_votes
             ? ` Głosowało ${payload.model_votes} modeli.`
@@ -1510,6 +1519,9 @@ function updateAccountInterface() {
     document.getElementById("currentUserLabel").textContent = loggedIn
         ? `${currentUser.display_name} · ${currentUser.role === "manager" ? "przełożony" : "pracownik"}`
         : "";
+    document.getElementById("workspaceTabLabel").textContent = manager ? "Pracownicy" : "To-do";
+    document.getElementById("todoTitle").textContent = manager ? "Pracownicy" : "Lista to-do cylindrów";
+    document.getElementById("aboutWorkspaceButton").textContent = manager ? "Otwórz pracowników" : "Otwórz zadania";
     document.getElementById("todoSubtitle").textContent = loggedIn
         ? (currentUser.role === "manager"
             ? "Zadania Twoje i pracowników, wraz z historią wykonania."
@@ -1574,28 +1586,52 @@ function renderEmployeeDirectory() {
         empty.hidden = true;
         return;
     }
-    const cards = employees.map(employee => {
+    const selectedOwner = document.getElementById("employeeFilter").value || "all";
+    const people = [
+        { ...currentUser, isSelf: true },
+        ...employees.map(employee => ({ ...employee, isSelf: false }))
+    ].filter(person => selectedOwner === "all" || String(person.id) === selectedOwner);
+    const visibleTodos = filteredTodos();
+    const cards = people.map(employee => {
         const card = document.createElement("article");
+        const header = document.createElement("div");
         const identity = document.createElement("div");
         const name = document.createElement("strong");
         const login = document.createElement("span");
         const counts = document.createElement("span");
         const passwordButton = document.createElement("button");
-        card.className = "employee-card";
-        identity.className = "employee-identity";
-        name.textContent = employee.display_name || employee.username;
-        login.textContent = `Login: ${employee.username}`;
+        const tasks = document.createElement("div");
+        const emptyTasks = document.createElement("p");
         const employeeTodos = todoItems.filter(item => item.owner_id === employee.id);
+        const displayedTodos = visibleTodos.filter(item => item.owner_id === employee.id);
+        card.className = "employee-card";
+        header.className = "employee-card-header";
+        identity.className = "employee-identity";
+        name.textContent = employee.isSelf
+            ? `Twoje zadania · ${employee.display_name}`
+            : (employee.display_name || employee.username);
+        login.textContent = `Login: ${employee.username}`;
         const doneCount = employeeTodos.filter(item => item.status === "done").length;
         const todoCount = employeeTodos.length;
         counts.className = "employee-task-count";
         counts.textContent = `${doneCount}/${todoCount} zakończonych`;
-        passwordButton.type = "button";
-        passwordButton.className = "secondary-button employee-password-button";
-        passwordButton.textContent = "Zmień hasło";
-        passwordButton.onclick = () => openEmployeePasswordDialog(employee);
         identity.append(name, login);
-        card.append(identity, counts, passwordButton);
+        header.append(identity, counts);
+        if (!employee.isSelf) {
+            passwordButton.type = "button";
+            passwordButton.className = "secondary-button employee-password-button";
+            passwordButton.textContent = "Zmień hasło";
+            passwordButton.onclick = () => openEmployeePasswordDialog(employee);
+            header.append(passwordButton);
+        }
+        tasks.className = "employee-card-todos";
+        tasks.replaceChildren(...displayedTodos.map(createTodoCard));
+        emptyTasks.className = "employee-todos-empty";
+        emptyTasks.textContent = todoFilter === "all"
+            ? "Brak zadań dla tej osoby."
+            : `Brak zadań w filtrze „${todoStatusName(todoFilter)}”.`;
+        emptyTasks.hidden = displayedTodos.length > 0;
+        card.append(header, tasks, emptyTasks);
         return card;
     });
     list.replaceChildren(...cards);
@@ -1644,7 +1680,6 @@ async function loadTodos() {
     }
     const payload = await apiRequest("/api/todos");
     todoItems = payload.todos || [];
-    renderEmployeeDirectory();
     renderTodos();
 }
 
@@ -1827,6 +1862,14 @@ function renderTodos() {
         return;
     }
     updateActiveTodoFilter();
+    if (currentUser.role === "manager") {
+        board.replaceChildren();
+        empty.hidden = true;
+        document.getElementById("employeeSummary").hidden = true;
+        renderEmployeeDirectory();
+        updateTodoBadge();
+        return;
+    }
     const items = filteredTodos();
     board.replaceChildren(...items.map(createTodoCard));
     empty.hidden = items.length > 0;
@@ -1839,6 +1882,51 @@ function cylinderSpectrum(source) {
         const value = Number(source?.[`mV_${index}`]);
         return Number.isFinite(value) ? value : null;
     });
+}
+
+function engineSnapshot(engineId) {
+    const normalized = String(engineId);
+    const predictions = diagnosticPredictions.filter(row => String(row.engine_id) === normalized);
+    const sourceRows = diagnosticSourceRows.filter(row => String(row.engine_id) === normalized);
+    if (!predictions.length || !sourceRows.length) return null;
+    return {
+        model: activeModelName,
+        predictions,
+        source_rows: sourceRows
+    };
+}
+
+function loadEngineSnapshot(snapshot) {
+    if (!snapshot || !Array.isArray(snapshot.predictions) || !Array.isArray(snapshot.source_rows)) {
+        return false;
+    }
+    if (!snapshot.predictions.length || !snapshot.source_rows.length) return false;
+    diagnosticPredictions = snapshot.predictions;
+    diagnosticSourceRows = snapshot.source_rows;
+    activeModelName = snapshot.model || activeModelName;
+    const modelSelect = document.getElementById("modelSelect");
+    if ([...modelSelect.options].some(option => option.value === activeModelName)) {
+        modelSelect.value = activeModelName;
+    }
+    const validation = diagnosticSourceRows.some(row =>
+        Object.prototype.hasOwnProperty.call(row, "label")
+        && Object.prototype.hasOwnProperty.call(row, "severity")
+    );
+    renderHealthPanel(diagnosticPredictions, diagnosticSourceRows, validation);
+    renderEngineRanking(diagnosticPredictions, diagnosticSourceRows);
+    renderFaultChart(diagnosticPredictions);
+    return true;
+}
+
+async function persistEngineSnapshotsForExistingTodos() {
+    if (!currentUser || !todoItems.length) return;
+    const pending = todoItems.filter(item => !item.engine_snapshot && engineSnapshot(item.engine_id));
+    if (!pending.length) return;
+    await Promise.all(pending.map(item => apiRequest(`/api/todos/${item.id}`, {
+        method: "PATCH",
+        body: { engine_snapshot: engineSnapshot(item.engine_id) }
+    })));
+    await loadTodos();
 }
 
 function populateTodoEditor(context) {
@@ -1873,6 +1961,7 @@ function openTodoEditorForCylinder(row, source) {
         status: "todo",
         note: "",
         spectrum: cylinderSpectrum(source),
+        engine_snapshot: engineSnapshot(row.engine_id),
         owner_id: currentUser?.id || null
     };
     todoEditorContext = context;
@@ -1890,7 +1979,10 @@ function openTodoEditorForItem(item) {
 
 function navigateToTodoCylinder(item) {
     switchAppView("diagnostics");
-    const found = diagnosticNavigator?.(item.engine_id, item.cylinder) || false;
+    let found = diagnosticNavigator?.(item.engine_id, item.cylinder) || false;
+    if (!found && loadEngineSnapshot(item.engine_snapshot)) {
+        found = diagnosticNavigator?.(item.engine_id, item.cylinder) || false;
+    }
     const status = document.getElementById("status");
     if (found) {
         status.textContent = `Otwarto silnik ${item.engine_id}, cylinder ${item.cylinder}.`;
@@ -1901,12 +1993,15 @@ function navigateToTodoCylinder(item) {
 }
 
 function switchAppView(name) {
+    const diagnostics = name === "diagnostics";
     const todo = name === "todo";
-    document.getElementById("diagnosticsView").hidden = todo;
+    const about = name === "about";
+    document.getElementById("diagnosticsView").hidden = !diagnostics;
     document.getElementById("todoView").hidden = !todo;
-    document.getElementById("diagnosticsTab").classList.toggle("active", !todo);
+    document.getElementById("aboutView").hidden = !about;
+    document.getElementById("diagnosticsTab").classList.toggle("active", diagnostics);
     document.getElementById("todoTab").classList.toggle("active", todo);
-    document.getElementById("diagnosticsTab").setAttribute("aria-selected", String(!todo));
+    document.getElementById("diagnosticsTab").setAttribute("aria-selected", String(diagnostics));
     document.getElementById("todoTab").setAttribute("aria-selected", String(todo));
     if (todo && currentUser) loadWorkspaceData().catch(error => window.alert(error.message));
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1937,6 +2032,12 @@ function showEmployeeCreationDialog() {
 function initializeAccountsAndTodos() {
     document.getElementById("diagnosticsTab").onclick = () => switchAppView("diagnostics");
     document.getElementById("todoTab").onclick = () => switchAppView("todo");
+    document.getElementById("aboutLink").onclick = event => {
+        event.preventDefault();
+        switchAppView("about");
+    };
+    document.getElementById("aboutDiagnosticsButton").onclick = () => switchAppView("diagnostics");
+    document.getElementById("aboutWorkspaceButton").onclick = () => switchAppView("todo");
     document.getElementById("loginButton").onclick = () => showAuth("login");
     document.getElementById("registerButton").onclick = () => showAuth("register");
     document.getElementById("todoLoginButton").onclick = () => showAuth("login");

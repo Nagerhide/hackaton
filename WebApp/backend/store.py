@@ -20,6 +20,7 @@ SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60
 USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]{3,50}$")
 TODO_STATUSES = ("todo", "in_progress", "done")
 TODO_SEVERITIES = ("male", "srednie", "duze", "nie_dotyczy")
+MAX_ENGINE_SNAPSHOT_BYTES = 2 * 1024 * 1024
 
 
 class StoreError(Exception):
@@ -139,6 +140,7 @@ class AppStore:
                     note TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL CHECK(status IN ('todo', 'in_progress', 'done')),
                     spectrum_json TEXT NOT NULL DEFAULT '[]',
+                    engine_snapshot_json TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     completed_at TEXT
@@ -147,6 +149,14 @@ class AppStore:
                 CREATE INDEX IF NOT EXISTS idx_todos_owner_status ON todos(owner_id, status);
                 """
             )
+            todo_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(todos)").fetchall()
+            }
+            if "engine_snapshot_json" not in todo_columns:
+                connection.execute(
+                    "ALTER TABLE todos ADD COLUMN engine_snapshot_json TEXT"
+                )
 
     @staticmethod
     def _display_name(value: str, fallback: str) -> str:
@@ -363,6 +373,35 @@ class AppStore:
         return result
 
     @staticmethod
+    def _validate_engine_snapshot(
+        value: Any, expected_engine_id: str
+    ) -> dict[str, Any] | None:
+        if value in (None, ""):
+            return None
+        if not isinstance(value, dict):
+            raise StoreError(422, "Snapshot silnika ma nieprawidłowy format.")
+        predictions = value.get("predictions")
+        source_rows = value.get("source_rows")
+        if not isinstance(predictions, list) or not isinstance(source_rows, list):
+            raise StoreError(422, "Snapshot silnika nie zawiera wymaganych danych.")
+        if not predictions or len(predictions) > 1000 or len(source_rows) > 1000:
+            raise StoreError(422, "Snapshot silnika ma nieprawidłową liczbę cylindrów.")
+        if not all(isinstance(row, dict) for row in [*predictions, *source_rows]):
+            raise StoreError(422, "Snapshot silnika zawiera nieprawidłowy wiersz.")
+        engine_ids = {
+            str(row.get("engine_id")) for row in [*predictions, *source_rows]
+        }
+        if engine_ids != {expected_engine_id}:
+            raise StoreError(422, "Snapshot musi dotyczyć wyłącznie wskazanego silnika.")
+        try:
+            encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
+        except (TypeError, ValueError) as error:
+            raise StoreError(422, "Snapshot silnika nie jest poprawnym JSON.") from error
+        if len(encoded.encode("utf-8")) > MAX_ENGINE_SNAPSHOT_BYTES:
+            raise StoreError(413, "Snapshot silnika przekracza limit 2 MB.")
+        return value
+
+    @staticmethod
     def _todo_text(value: Any, name: str, maximum: int, required: bool = True) -> str:
         result = str(value or "").strip()
         if required and not result:
@@ -387,6 +426,9 @@ class AppStore:
         if status not in TODO_STATUSES:
             raise StoreError(422, "Nieprawidłowy stan zadania.")
         spectrum = self._validate_spectrum(payload.get("spectrum"))
+        engine_snapshot = self._validate_engine_snapshot(
+            payload.get("engine_snapshot"), engine_id
+        )
         now = utc_now()
         with self.connect() as connection:
             cursor = connection.execute(
@@ -394,8 +436,8 @@ class AppStore:
                 INSERT INTO todos(
                     owner_id, created_by, engine_id, cylinder, n_cylinders,
                     fault_label, severity, note, status, spectrum_json,
-                    created_at, updated_at, completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    engine_snapshot_json, created_at, updated_at, completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     owner["id"],
@@ -408,6 +450,7 @@ class AppStore:
                     self._todo_text(payload.get("note"), "notatka", 1000, False),
                     status,
                     json.dumps(spectrum, ensure_ascii=False),
+                    json.dumps(engine_snapshot, ensure_ascii=False) if engine_snapshot else None,
                     now,
                     now,
                     now if status == "done" else None,
@@ -432,6 +475,9 @@ class AppStore:
             "note": row["note"],
             "status": row["status"],
             "spectrum": json.loads(row["spectrum_json"] or "[]"),
+            "engine_snapshot": json.loads(row["engine_snapshot_json"])
+            if row["engine_snapshot_json"]
+            else None,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "completed_at": row["completed_at"],
@@ -516,6 +562,13 @@ class AppStore:
                 raise StoreError(422, "Nieprawidłowy stan zadania.")
             updates["status"] = payload["status"]
             updates["completed_at"] = utc_now() if payload["status"] == "done" else None
+        if "engine_snapshot" in payload:
+            snapshot = self._validate_engine_snapshot(
+                payload["engine_snapshot"], current["engine_id"]
+            )
+            updates["engine_snapshot_json"] = (
+                json.dumps(snapshot, ensure_ascii=False) if snapshot else None
+            )
         if "owner_id" in payload:
             if actor["role"] != "manager":
                 raise StoreError(403, "Tylko przełożony może przepisać zadanie.")

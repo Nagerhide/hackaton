@@ -40,6 +40,25 @@ class WorkspaceStoreTests(unittest.TestCase):
                 "fault_label": "pompa",
                 "severity": "male",
                 "spectrum": [1.0, 2.0, None, 3.0],
+                "engine_snapshot": {
+                    "model": "model2",
+                    "predictions": [
+                        {
+                            "engine_id": "engine_0049",
+                            "cylinder": 14,
+                            "label": "pompa",
+                            "severity": "male",
+                        }
+                    ],
+                    "source_rows": [
+                        {
+                            "engine_id": "engine_0049",
+                            "cylinder": 14,
+                            "n_cylinders": 16,
+                            "mV_0": 1.0,
+                        }
+                    ],
+                },
             },
         )
 
@@ -51,6 +70,10 @@ class WorkspaceStoreTests(unittest.TestCase):
         self.assertEqual(visible[0]["id"], todo["id"])
         self.assertEqual(visible[0]["owner_username"], "employee")
         self.assertEqual(visible[0]["created_by_username"], "manager")
+        self.assertEqual(
+            visible[0]["engine_snapshot"]["predictions"][0]["engine_id"],
+            "engine_0049",
+        )
 
     def test_employee_updates_own_status_and_fault(self):
         todo = self.create_employee_todo()
@@ -153,6 +176,54 @@ class WorkspaceStoreTests(unittest.TestCase):
                 self.manager, outsider["id"], "not-allowed-pass"
             )
         self.assertEqual(missing.exception.status_code, 404)
+
+    def test_snapshot_cannot_mix_multiple_engines(self):
+        with self.assertRaises(StoreError) as invalid:
+            self.store.create_todo(
+                self.manager,
+                {
+                    "engine_id": "engine_a",
+                    "cylinder": 1,
+                    "fault_label": "kontrola",
+                    "severity": "nie_dotyczy",
+                    "engine_snapshot": {
+                        "predictions": [
+                            {"engine_id": "engine_b", "cylinder": 1}
+                        ],
+                        "source_rows": [
+                            {"engine_id": "engine_a", "cylinder": 1}
+                        ],
+                    },
+                },
+            )
+        self.assertEqual(invalid.exception.status_code, 422)
+
+    def test_existing_todo_can_receive_engine_snapshot(self):
+        todo = self.store.create_todo(
+            self.manager,
+            {
+                "engine_id": "engine_old",
+                "cylinder": 2,
+                "fault_label": "kontrola",
+                "severity": "nie_dotyczy",
+            },
+        )
+        updated = self.store.update_todo(
+            self.manager,
+            todo["id"],
+            {
+                "engine_snapshot": {
+                    "model": "model1",
+                    "predictions": [
+                        {"engine_id": "engine_old", "cylinder": 2, "label": "ok"}
+                    ],
+                    "source_rows": [
+                        {"engine_id": "engine_old", "cylinder": 2, "mV_0": 1.0}
+                    ],
+                }
+            },
+        )
+        self.assertEqual(updated["engine_snapshot"]["model"], "model1")
 
 
 if __name__ == "__main__":

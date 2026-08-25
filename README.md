@@ -1,8 +1,7 @@
 # PIHER2 — diagnostyka akustyczna silnika
 
-WebApp pozwala wybrać model 2 albo model 3 przed uruchomieniem analizy.
-Domyślnie używa stabilnego `model2`, a `model3` pozostaje wariantem odpornym na
-braki danych. Ten sam proces FastAPI serwuje stronę oraz endpointy, więc nie
+WebApp pozwala wybrać model 1, 2 albo 3 przed uruchomieniem analizy.
+Domyślnie używa `model2`. Ten sam proces FastAPI serwuje stronę oraz endpointy, więc nie
 trzeba uruchamiać osobnego serwera statycznego.
 
 ## Uruchomienie
@@ -18,11 +17,11 @@ Następnie otwórz <http://127.0.0.1:8000>. Dokumentacja API jest dostępna pod
 <http://127.0.0.1:8000/docs>, a kontrola gotowości pod
 <http://127.0.0.1:8000/api/health>.
 
-Backend automatycznie wykrywa artefakty obu modeli:
+Backend automatycznie wykrywa artefakty trzech modeli:
 
-- `model/acoustic_model2.pkl` i `model/verdict_explainer.pkl` — domyślny model 2;
-- `model/acoustic_model3.pkl` i `model/verdict_explainer3.pkl` — model 3 z
-  rekonstruktorami brakujących odczytów.
+- `WebApp/backend/acoustic_model.pkl`;
+- `model/acoustic_model2.pkl` i `model/verdict_explainer.pkl`;
+- `model/acoustic_model3.pkl` i `model/verdict_explainer3.pkl`.
 
 ## Konta i lista serwisowa
 
@@ -34,14 +33,18 @@ operacja unieważnia wszystkie wcześniejsze sesje tego pracownika. Przełożony
 widzi swoje zadania oraz zadania wyłącznie swoich pracowników; pracownik widzi
 i zmienia tylko własną listę.
 
-W szczegółach cylindra przycisk `+` tworzy zadanie zawierające miniaturę widma,
+W widoku przełożonego zakładka `Pracownicy` pokazuje każdego członka zespołu
+osobno, a bezpośrednio pod nim jego zadania. W szczegółach cylindra przycisk `+` tworzy zadanie zawierające miniaturę widma,
 numer silnika, numer cylindra, rozpoznaną usterkę i powagę. W osobnej zakładce
 To-do można poprawić opis usterki, dopisać sposób naprawy, przypisać pracownika
 oraz ustawić stan `Do zrobienia`, `W trakcie` albo `Skończone`. Zakończone
 zadania pozostają w historii i można je filtrować.
 Aktywny filtr jest wskazany kolorem, znacznikiem i tekstowym podsumowaniem.
 Kliknięcie karty zadania przechodzi do odpowiadającego silnika i cylindra w
-aktualnie wczytanym pliku diagnostycznym.
+aktualnie wczytanym pliku diagnostycznym. Nowe zadania zapisują również snapshot
+całego silnika w SQLite, dzięki czemu po ponownym uruchomieniu strony nie trzeba
+jeszcze raz wczytywać pliku CSV. Starsze zadania bez snapshotu nadal pokazują
+prośbę o wczytanie odpowiedniego pliku.
 
 Konta, sesje i zadania są trwale zapisywane w lokalnej bazie SQLite
 `WebApp/backend/piher2.sqlite3`, tworzonej przy pierwszym uruchomieniu. Inną
@@ -126,7 +129,7 @@ startu procesu — nie przelicza zbioru walidacyjnego przy predykcji.
 ## API
 
 `POST /api/predict?model=model2` przyjmuje `multipart/form-data` z polem `file`.
-Parametr `model` może mieć wartość `model2` (domyślna) albo `model3`. Odpowiedź
+Parametr `model` może mieć wartość `model1`, `model2` (domyślna) albo `model3`. Odpowiedź
 ma postać JSON:
 
 ```json

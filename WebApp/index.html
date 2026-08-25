@@ -4,22 +4,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Piher2</title>
-    <link rel="icon" type="image/x-icon" href="/images/logo.png">
+    <title>CSV Predictor</title>
     <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
     <header class="top-bar">
-        <a class="top-bar-brand" href="#" aria-label="Przejdź na początek strony">
-            <img src="../images/logo.png" style="width: 55px; height: 55px;" alt="PIHER2" class="top-bar-logo">
-        
+        <a id="aboutLink" class="top-bar-brand" href="#about" aria-label="O nas">
+            <span class="top-bar-mark">PH2</span>
             <span>Biblioteka diagnostyczna</span>
         </a>
         <nav class="app-tabs" aria-label="Główne sekcje">
             <button type="button" id="diagnosticsTab" class="app-tab active" aria-selected="true">Diagnostyka</button>
             <button type="button" id="todoTab" class="app-tab" aria-selected="false">
-                To-do <span id="todoBadge" class="todo-badge" hidden>0</span>
+                <span id="workspaceTabLabel">To-do</span> <span id="todoBadge" class="todo-badge" hidden>0</span>
             </button>
         </nav>
         <div class="top-bar-actions">
@@ -56,8 +54,9 @@
             <label class="model-choice" for="modelSelect">
                 <span>Model diagnostyczny</span>
                 <select id="modelSelect">
-                    <option value="model2" selected>Model 2 · domyślny</option>
-                    <option value="model3">Model 3 · odporny na braki</option>
+                    <option value="model1">Model 1</option>
+                    <option value="model2" selected>Model 2</option>
+                    <option value="model3">Model 3</option>
                 </select>
             </label>
             <input
@@ -198,6 +197,19 @@
                 <div id="employeeSummary" class="employee-summary" hidden></div>
                 <div id="todoBoard" class="todo-board" aria-live="polite"></div>
                 <p id="todoEmpty" class="todo-empty" hidden>Brak zadań dla wybranego filtra.</p>
+            </div>
+        </section>
+
+        <section id="aboutView" class="app-view about-view" aria-labelledby="aboutTitle" hidden>
+            <div class="about-content">
+                <p class="panel-kicker">PIHER2</p>
+                <h1 id="aboutTitle">Pomagamy dbać o silniki i sprawnie organizować naprawy</h1>
+                <p>Wspieramy diagnostykę silników na podstawie pomiarów akustycznych, pomagamy wskazywać cylindry wymagające uwagi oraz porządkować pracę serwisową.</p>
+                <p>W jednym miejscu łączymy bibliotekę silników, informacje o usterkach, zadania naprawcze i współpracę przełożonych z pracownikami.</p>
+                <div class="about-actions">
+                    <button type="button" id="aboutDiagnosticsButton" class="primary-button">Przejdź do diagnostyki</button>
+                    <button type="button" id="aboutWorkspaceButton" class="secondary-button">Otwórz zadania</button>
+                </div>
             </div>
         </section>
     </main>
