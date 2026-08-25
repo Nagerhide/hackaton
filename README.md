@@ -3,7 +3,7 @@
 WebApp pozwala wybrać model 2 albo model 3 przed uruchomieniem analizy.
 Domyślnie używa stabilnego `model2`, a `model3` pozostaje wariantem odpornym na
 braki danych. Ten sam proces FastAPI serwuje stronę oraz endpointy, więc nie
-trzeba uruchamiać osobnego serwera statycznego.
+trzeba uruchamiać osobnego serwera statycznego. Strona jest w miarę odporna na jakieś wygibaski. 
 
 ## Uruchomienie
 
