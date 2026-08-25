@@ -116,6 +116,15 @@ const severityNames = {
     nie_dotyczy: "nie dotyczy"
 };
 
+// Reference spectra averaged from tests/val.csv; zero readings are excluded.
+const REFERENCE_SPECTRA = {
+    ok: [36.787445, 32.688668, 26.86844, 31.771518, 40.64802, 47.821801, 53.257961, 56.891998, 58.878828, 59.543585, 57.486526, 53.836857, 49.045771, 43.904297, 39.403157, 34.583845, 31.419899, 28.906088, 24.821973, 26.264314, 28.614216],
+    iglica: [37.548187, 35.665937, 26.584875, 32.16425, 39.826187, 45.209187, 44.471375, 47.310938, 46.420812, 44.045938, 44.674937, 43.910125, 42.285938, 36.843125, 31.96275, 30.743813, 30.082187, 24.829875, 17.45225, 16.226875, 18.552813],
+    zakoksowany: [32.844167, 27.388111, 25.926556, 33.496722, 43.911944, 51.215833, 56.018222, 57.178944, 52.882556, 40.926222, 51.781, 57.251389, 56.310389, 52.131833, 49.055111, 46.637333, 45.045889, 41.938111, 39.211667, 38.533389, 38.273389],
+    lejacy: [38.776786, 34.696714, 21.910357, 21.535571, 24.7555, 27.644643, 33.922214, 36.463643, 34.179571, 32.171286, 29.996929, 24.348643, 20.4665, 17.540643, 15.912143, 13.437571, 11.372214, 8.714, 6.687071, 5.9745, 5.663357],
+    pompa: [37.910444, 32.172, 23.974222, 18.038333, 31.225889, 41.654222, 47.700222, 49.646111, 49.899556, 48.363556, 45.06, 39.479111, 33.042889, 27.405444, 25.748778, 24.084, 26.091111, 30.586778, 33.979667, 31.193333, 27.893556]
+};
+
 function parseCsv(text) {
     const rows = [];
     let row = [], field = "", quoted = false;
@@ -148,9 +157,18 @@ function parseCsv(text) {
     return values.map(row => Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ""])));
 }
 
-function drawCylinderGraph(canvas, source, state, { width = 220, height = 48 } = {}) {
+function drawCylinderGraph(canvas, source, state, {
+    width = 220,
+    height = 48,
+    showScale = false,
+    averageValues = null
+} = {}) {
     const values = Array.from({ length: 21 }, (_, index) => Number(source[`mV_${index}`]));
-    if (values.some(value => !Number.isFinite(value))) return false;
+    const plottedValues = [
+        ...values,
+        ...(averageValues || [])
+    ].filter(value => Number.isFinite(value) && value !== 0);
+    if (plottedValues.length < 2) return false;
 
     const colors = {
         ok: "#1ea97a",
@@ -161,10 +179,14 @@ function drawCylinderGraph(canvas, source, state, { width = 220, height = 48 } =
     };
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
     const context = canvas.getContext("2d");
-    const min = Math.min(...values);
-    const max = Math.max(...values);
+    const min = 0;
+    const max = Math.max(...plottedValues);
     const span = max - min || 1;
-    const padding = 3;
+    const padding = showScale
+        ? { left: 52, right: 52, top: 14, bottom: 28 }
+        : { left: 3, right: 3, top: 3, bottom: 3 };
+    const plotWidth = width - padding.left - padding.right;
+    const plotHeight = height - padding.top - padding.bottom;
     const color = colors[state] || colors.unknown;
 
     canvas.width = width * ratio;
@@ -172,14 +194,59 @@ function drawCylinderGraph(canvas, source, state, { width = 220, height = 48 } =
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, width, height);
 
-    context.beginPath();
-    values.forEach((value, index) => {
-        const x = padding + (index / (values.length - 1)) * (width - padding * 2);
-        const y = height - padding - ((value - min) / span) * (height - padding * 2);
-        index === 0 ? context.moveTo(x, y) : context.lineTo(x, y);
-    });
-    context.lineTo(width - padding, height - padding);
-    context.lineTo(padding, height - padding);
+    if (showScale) {
+        context.font = "13px Arial, sans-serif";
+        context.lineWidth = 1;
+        context.strokeStyle = "rgba(22, 107, 77, 0.12)";
+        context.fillStyle = "rgba(31, 41, 55, 0.68)";
+        context.textAlign = "right";
+        context.textBaseline = "middle";
+
+        [0, 0.5, 1].forEach(tick => {
+            const y = padding.top + (1 - tick) * plotHeight;
+            const value = min + tick * span;
+            context.beginPath();
+            context.moveTo(padding.left, y);
+            context.lineTo(width - padding.right, y);
+            context.stroke();
+            context.fillText(value.toFixed(1), padding.left - 8, y);
+        });
+
+        context.textAlign = "center";
+        context.textBaseline = "top";
+        [0, 10, 20].forEach(index => {
+            const x = padding.left + (index / (values.length - 1)) * plotWidth;
+            context.fillText(`mV_${index}`, x, height - padding.bottom + 9);
+        });
+        context.textAlign = "left";
+        context.textBaseline = "alphabetic";
+        context.fillText("mV", padding.left, 9);
+    }
+
+    const drawLine = () => {
+        let started = false;
+        context.beginPath();
+        values.forEach((value, index) => {
+            if (!Number.isFinite(value) || value === 0) return;
+            const x = padding.left + (index / (values.length - 1)) * plotWidth;
+            const y = height - padding.bottom - ((value - min) / span) * plotHeight;
+            if (started) context.lineTo(x, y);
+            else {
+                context.moveTo(x, y);
+                started = true;
+            }
+        });
+    };
+
+    drawLine();
+    const firstValidIndex = values.findIndex(value => Number.isFinite(value) && value !== 0);
+    const lastValidIndex = values.length - 1 - [...values].reverse().findIndex(
+        value => Number.isFinite(value) && value !== 0
+    );
+    const firstX = padding.left + (firstValidIndex / (values.length - 1)) * plotWidth;
+    const lastX = padding.left + (lastValidIndex / (values.length - 1)) * plotWidth;
+    context.lineTo(lastX, height - padding.bottom);
+    context.lineTo(firstX, height - padding.bottom);
     context.closePath();
     const fill = context.createLinearGradient(0, 0, 0, height);
     fill.addColorStop(0, `${color}33`);
@@ -187,19 +254,35 @@ function drawCylinderGraph(canvas, source, state, { width = 220, height = 48 } =
     context.fillStyle = fill;
     context.fill();
 
-    context.beginPath();
-    values.forEach((value, index) => {
-        const x = padding + (index / (values.length - 1)) * (width - padding * 2);
-        const y = height - padding - ((value - min) / span) * (height - padding * 2);
-        index === 0 ? context.moveTo(x, y) : context.lineTo(x, y);
-    });
+    drawLine();
     context.strokeStyle = color;
     context.lineWidth = 1.8;
     context.lineJoin = "round";
     context.lineCap = "round";
     context.stroke();
+
+    if (averageValues) {
+        context.beginPath();
+        let started = false;
+        averageValues.forEach((value, index) => {
+            if (!Number.isFinite(value) || value === 0) return;
+            const x = padding.left + (index / (averageValues.length - 1)) * plotWidth;
+            const y = height - padding.bottom - ((value - min) / span) * plotHeight;
+            if (started) context.lineTo(x, y);
+            else {
+                context.moveTo(x, y);
+                started = true;
+            }
+        });
+        context.setLineDash([7, 5]);
+        context.strokeStyle = "rgba(31, 41, 55, 0.72)";
+        context.lineWidth = showScale ? 2 : 1.2;
+        context.stroke();
+        context.setLineDash([]);
+    }
     return true;
 }
+
 
 function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
     const panel = document.getElementById("healthPanel");
@@ -248,6 +331,16 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
             button.append(number, label);
             const source = sourceByCylinder.get(`${row.engine_id}:${row.cylinder}`);
             if (source) {
+                const skippedMeasurements = Array.from({ length: 21 }, (_, index) => Number(source[`mV_${index}`]))
+                    .filter(value => !Number.isFinite(value) || value === 0).length;
+                if (skippedMeasurements >= 3) {
+                    const warning = document.createElement("span");
+                    warning.className = "cylinder-warning";
+                    warning.textContent = "!";
+                    warning.title = `Pominięte pomiary: ${skippedMeasurements}`;
+                    warning.setAttribute("aria-label", warning.title);
+                    button.append(warning);
+                }
                 const graph = document.createElement("canvas");
                 graph.className = "cylinder-graph";
                 graph.setAttribute("aria-hidden", "true");
@@ -299,17 +392,36 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                     const measurementParameters = { ...source };
                     delete measurementParameters.label;
                     delete measurementParameters.severity;
+                    measurementParameters["Pominięte pomiary"] = Array.from(
+                        { length: 21 },
+                        (_, index) => Number(source[`mV_${index}`])
+                    ).filter(value => !Number.isFinite(value) || value === 0).length;
                     const graphSection = document.createElement("section");
                     const graphTitle = document.createElement("h3");
+                    const graphLegend = document.createElement("p");
                     const graph = document.createElement("canvas");
+                    const cylinderType = isValidationFile && source.label ? source.label : row.label;
+                    const referenceSpectrum = REFERENCE_SPECTRA[cylinderType] || null;
                     graphSection.className = "cylinder-details-section";
                     graphTitle.textContent = "Widmo akustyczne cylindra";
+                    graphLegend.className = "graph-legend";
+                    graphLegend.textContent = `Linia przerywana: średnie widmo referencyjne typu „${labelNames[cylinderType] || cylinderType}” z val.csv.`;
                     graph.className = "cylinder-details-graph";
                     graph.setAttribute("role", "img");
                     graph.setAttribute("aria-label", `Wykres widma akustycznego cylindra ${row.cylinder}`);
-                    drawCylinderGraph(graph, source, state, { width: 640, height: 180 });
-                    graphSection.append(graphTitle, graph);
+                    graphSection.append(graphTitle);
+                    if (referenceSpectrum) graphSection.append(graphLegend);
+                    graphSection.append(graph);
                     details.append(graphSection, createParameterSection("Parametry pomiarowe", measurementParameters));
+                    requestAnimationFrame(() => {
+                        const graphBounds = graph.getBoundingClientRect();
+                        drawCylinderGraph(graph, source, state, {
+                            width: Math.round(graphBounds.width),
+                            height: Math.round(graphBounds.height),
+                            showScale: true,
+                            averageValues: referenceSpectrum
+                        });
+                    });
                     if (isValidationFile) {
                         details.append(createParameterSection("Prawidłowy wynik z tabeli", {
                             label: labelNames[source.label] || source.label,
@@ -392,36 +504,97 @@ function renderFaultChart(predictions) {
     });
 }
 
-function renderEngineRanking(predictions) {
+function renderEngineRanking(predictions, sourceRows) {
     const panel = document.getElementById("engineRankingPanel");
     const ranking = document.getElementById("engineRanking");
+    const details = document.getElementById("engineRankingDetails");
     const severityScore = { male: 1, srednie: 2, duze: 3, nie_dotyczy: 0 };
+    const sourceByCylinder = new Map(sourceRows.map(row => [`${row.engine_id}:${row.cylinder}`, row]));
     const engines = [...new Set(predictions.map(row => row.engine_id))].map(engineId => {
         const cylinders = predictions.filter(row => row.engine_id === engineId);
         const faults = cylinders.filter(row => row.label !== "ok");
-        const score = faults.reduce((sum, row) => sum + (severityScore[row.severity] || 1), 0);
-        return { engineId, faultCount: faults.length, score };
+        const faultRisk = faults.reduce((sum, row) => sum + (severityScore[row.severity] || 1), 0);
+        const skippedMeasurements = cylinders.reduce((sum, cylinder) => {
+            const source = sourceByCylinder.get(`${cylinder.engine_id}:${cylinder.cylinder}`);
+            if (!source) return sum;
+            return sum + Array.from({ length: 21 }, (_, index) => Number(source[`mV_${index}`]))
+                .filter(value => !Number.isFinite(value) || value === 0).length;
+        }, 0);
+        return {
+            engineId,
+            faultCount: faults.length,
+            skippedMeasurements,
+            score: faultRisk + skippedMeasurements
+        };
     }).sort((first, second) =>
         first.score - second.score || first.faultCount - second.faultCount || first.engineId.localeCompare(second.engineId)
     );
 
-    const best = engines[0];
-    const worst = engines[engines.length - 1];
+    const worstEngines = engines.reverse().slice(0, 10);
     ranking.replaceChildren();
+    details.style.display = "none";
 
-    [
-        { title: "✓ Najlepszy silnik", engine: best, className: "best" },
-        { title: "⚠ Najgorszy silnik", engine: worst, className: "worst" }
-    ].forEach(({ title, engine, className }) => {
-        const card = document.createElement("div");
+    worstEngines.forEach((engine, index) => {
+        const card = document.createElement("button");
+        const rank = document.createElement("span");
+        const content = document.createElement("div");
         const heading = document.createElement("strong");
         const description = document.createElement("span");
-        card.className = `engine-rating ${className}`;
-        heading.textContent = `${title}: ${engine.engineId}`;
-        description.textContent = engine.faultCount === 0
-            ? "Nie wykryto usterek."
-            : `Wykryte usterki: ${engine.faultCount}; wskaźnik ryzyka: ${engine.score}.`;
-        card.append(heading, description);
+        const risk = document.createElement("span");
+        card.type = "button";
+        card.className = "engine-rating";
+        rank.className = "engine-rank";
+        rank.textContent = index + 1;
+        heading.textContent = engine.engineId;
+        description.textContent = `${engine.faultCount} usterek`;
+        risk.className = "engine-risk";
+        risk.textContent = `Ryzyko: ${engine.score}`;
+        content.append(heading, description);
+        card.append(rank, content, risk);
+        card.addEventListener("click", () => {
+            if (card.classList.contains("active")) {
+                card.classList.remove("active");
+                details.style.display = "none";
+                return;
+            }
+            const cylinders = predictions.filter(row => row.engine_id === engine.engineId);
+            const countBy = (rows, key, labels) => Object.entries(rows.reduce((counts, row) => {
+                counts[row[key]] = (counts[row[key]] || 0) + 1;
+                return counts;
+            }, {})).map(([value, count]) => `${labels[value] || value}: ${count}`).join(", ") || "brak";
+            const faults = cylinders.filter(row => row.label !== "ok");
+            const faultTypes = new Set(faults.map(row => row.label));
+            const severityFaults = faultTypes.size > 1
+                ? faults.filter(row => row.severity !== "nie_dotyczy")
+                : faults;
+            const stats = {
+                "Liczba cylindrów": cylinders.length,
+                "Wykryte usterki": engine.faultCount,
+                "Pominięte pomiary": engine.skippedMeasurements,
+                "Wskaźnik ryzyka": engine.score,
+                "Typy usterek": countBy(faults, "label", labelNames),
+                "Nasilenie": countBy(severityFaults, "severity", severityNames)
+            };
+            const title = document.createElement("h3");
+            const list = document.createElement("dl");
+            title.className = "engine-ranking-details-title";
+            title.textContent = `Statystyki silnika ${engine.engineId}`;
+            list.className = "engine-stat-grid";
+            Object.entries(stats).forEach(([name, value]) => {
+                const item = document.createElement("div");
+                const term = document.createElement("dt");
+                const definition = document.createElement("dd");
+                term.textContent = name;
+                definition.textContent = value;
+                item.append(term, definition);
+                list.append(item);
+            });
+            ranking.querySelectorAll(".engine-rating").forEach(item => item.classList.remove("active"));
+            card.classList.add("active");
+            details.replaceChildren(title, list);
+            card.after(details);
+            details.style.display = "block";
+        });
         ranking.append(card);
     });
 
@@ -571,7 +744,7 @@ button.addEventListener("click", async function () {
         download.style.display = "inline-flex";
 
         renderHealthPanel(predictions, sourceRows, isValidationFile);
-        renderEngineRanking(predictions);
+        renderEngineRanking(predictions, sourceRows);
         renderFaultChart(predictions);
 
         status.textContent = isValidationFile
