@@ -1432,12 +1432,12 @@ button.addEventListener("click", async function () {
         });
 
         const voteInfo = payload.model_votes
-            ? ` Głosowało ${payload.model_votes} modeli.`
+            ? ``
             : "";
         const modelLabel = payload.selected_model || selectedModel;
         status.textContent = isValidationFile
-            ? `Analiza ${modelLabel} zakończona.${voteInfo}`
-            : `Predykcja ${modelLabel} zakończona.${voteInfo}`;
+            ? `Analiza zakończona.${voteInfo}`
+            : `Predykcja zakończona.${voteInfo}`;
     } catch (error) {
         console.error("ERROR:", error);
         status.textContent = "Błąd: " + error.message;
