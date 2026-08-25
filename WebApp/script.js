@@ -909,7 +909,7 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                     if (highlightedIndices.length) {
                         const highlightLegend = document.createElement("span");
                         highlightLegend.className = "graph-legend-highlight";
-                        highlightLegend.textContent = "Podejrzany fragment model2";
+                        highlightLegend.textContent = "Podejrzany fragment model3";
                         graphLegend.append(highlightLegend);
                     }
                     graph.className = "cylinder-details-graph";
@@ -1341,7 +1341,7 @@ button.addEventListener("click", async function () {
             throw new Error(payload?.detail || `Serwer zwrócił błąd HTTP ${response.status}.`);
         }
         if (!payload || !Array.isArray(payload.results)) {
-            throw new Error("Serwer zwrócił nieprawidłowy format odpowiedzi model2.");
+            throw new Error("Serwer zwrócił nieprawidłowy format odpowiedzi model3.");
         }
 
         referenceSpectra = payload.reference_spectra || {};
@@ -1370,7 +1370,7 @@ button.addEventListener("click", async function () {
         resultUrl = url;
 
         download.href = url;
-        download.download = "wynik_model2.csv";
+        download.download = "wynik_model3.csv";
         download.textContent = isValidationFile
             ? "Pobierz wynik CSV"
             : "Pobierz predykcję CSV";
@@ -1389,8 +1389,8 @@ button.addEventListener("click", async function () {
             ? ` Głosowało ${payload.model_votes} modeli.`
             : "";
         status.textContent = isValidationFile
-            ? `Analiza model2 zakończona.${voteInfo}`
-            : `Predykcja model2 zakończona.${voteInfo}`;
+            ? `Analiza model3 zakończona.${voteInfo}`
+            : `Predykcja model3 zakończona.${voteInfo}`;
     } catch (error) {
         console.error("ERROR:", error);
         status.textContent = "Błąd: " + error.message;

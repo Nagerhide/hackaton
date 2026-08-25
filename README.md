@@ -1,8 +1,8 @@
 # PIHER2 — diagnostyka akustyczna silnika
 
-WebApp jest podłączony do `model/model2.py` przez stabilną funkcję
-`predict_api.predict`. Ten sam proces FastAPI serwuje stronę oraz endpointy,
-więc nie trzeba uruchamiać osobnego serwera statycznego.
+WebApp jest podłączony bezpośrednio do publicznej funkcji `predict` z
+`model/model3.py`. Ten sam proces FastAPI serwuje stronę oraz endpointy, więc
+nie trzeba uruchamiać osobnego serwera statycznego.
 
 ## Uruchomienie
 
@@ -19,8 +19,24 @@ Następnie otwórz <http://127.0.0.1:8000>. Dokumentacja API jest dostępna pod
 
 Backend automatycznie korzysta z artefaktów:
 
-- `model/acoustic_model2.pkl` — ensemble klasyfikatorów;
-- `model/verdict_explainer.pkl` — osobny model wyjaśniający werdykt.
+- `model/acoustic_model3.pkl` — ensemble klasyfikatorów i rekonstruktory;
+- `model/verdict_explainer3.pkl` — osobny model wyjaśniający werdykt.
+
+## Eksperymentalny model3
+
+Odporna na braki architektura znajduje się w `model/model3.py`. Łączy
+rekonstrukcje KNN i Ridge z klasyfikatorem pomijającym brakujące pasma oraz
+wielokrotnym Group-CV ensemble. Zachowuje API zgodne z `model2`. W niezależnych
+testach 220 masek (10% braków, maks. 3 w wierszu i 2 kolejne) najgorszy wynik
+wyniósł `35.255` punktu. Jest to obecnie model używany przez WebApp i endpoint
+`/api/predict`.
+
+```bash
+.venv/bin/python model/model3.py
+.venv/bin/python -B tests/benchmark_model3_missing.py --masks 30
+```
+
+Szczegóły architektury i wyniki: `model/MODEL3.md`.
 
 ## Dane wejściowe
 

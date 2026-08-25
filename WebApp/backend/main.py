@@ -1,4 +1,4 @@
-"""HTTP API oraz serwer statyczny WebApp korzystający z model2."""
+"""HTTP API oraz serwer statyczny WebApp korzystający z model3."""
 
 from __future__ import annotations
 
@@ -19,27 +19,28 @@ from fastapi.responses import FileResponse, Response
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 WEBAPP_DIR = PROJECT_DIR / "WebApp"
-MODEL_PATH = PROJECT_DIR / "model" / "acoustic_model2.pkl"
-EXPLAINER_PATH = PROJECT_DIR / "model" / "verdict_explainer.pkl"
+MODEL_DIR = PROJECT_DIR / "model"
+MODEL_PATH = MODEL_DIR / "acoustic_model3.pkl"
+EXPLAINER_PATH = MODEL_DIR / "verdict_explainer3.pkl"
 REFERENCE_SPECTRA_PATH = WEBAPP_DIR / "reference_spectra.json"
 
 # Ten moduł może być uruchamiany zarówno z katalogu projektu, jak i bezpośrednio
 # z WebApp/backend. W obu przypadkach importujemy jeden, publiczny punkt inferencji.
-if str(PROJECT_DIR) not in sys.path:
-    sys.path.insert(0, str(PROJECT_DIR))
+if str(MODEL_DIR) not in sys.path:
+    sys.path.insert(0, str(MODEL_DIR))
 
-from predict_api import predict as model2_predict  # noqa: E402
+from model3 import predict as model3_predict  # noqa: E402
 
 
-LOGGER = logging.getLogger("model2-webapp")
+LOGGER = logging.getLogger("model3-webapp")
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 MAX_EXTRACTED_CSV_SIZE = 10 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 50
 
 app = FastAPI(
     title="PIHER2 Engine Failure Predictor",
-    description="WebApp i API inferencji model2.",
-    version="2.0",
+    description="WebApp i API inferencji model3 odpornego na braki danych.",
+    version="3.0",
 )
 
 # Umożliwia także otwarcie index.html bezpośrednio z dysku. Przy zwykłym
@@ -142,16 +143,18 @@ async def run_prediction(file: UploadFile, include_bands: bool = False) -> dict:
     frame = parse_csv(data)
     try:
         response = await run_in_threadpool(
-            model2_predict,
+            model3_predict,
             frame,
-            include_bands,
-            False,
+            classifier_path=MODEL_PATH,
+            explainer_path=EXPLAINER_PATH,
+            include_bands=include_bands,
+            display=False,
         )
     except (KeyError, TypeError, ValueError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as error:  # pragma: no cover - ochronna granica endpointu
-        LOGGER.exception("Predykcja model2 nie powiodła się")
-        raise HTTPException(status_code=500, detail="Predykcja model2 nie powiodła się.") from error
+        LOGGER.exception("Predykcja model3 nie powiodła się")
+        raise HTTPException(status_code=500, detail="Predykcja model3 nie powiodła się.") from error
     reference_data = load_reference_spectra()
     response["input_rows"] = len(frame)
     response["reference_spectra"] = reference_data["by_label"]
@@ -166,7 +169,8 @@ def health_check() -> dict:
     reference_data = load_reference_spectra()
     return {
         "status": "ok" if artifacts_ready else "missing_model",
-        "service": "model2-prediction-api",
+        "service": "model3-prediction-api",
+        "version": app.version,
         "model": MODEL_PATH.name,
         "explainer": EXPLAINER_PATH.name,
         "artifacts_ready": artifacts_ready,
@@ -187,7 +191,7 @@ async def prediction(
     file: UploadFile = File(...),
     include_bands: bool = False,
 ) -> dict:
-    """Uruchamia model2 i zwraca predykcje wraz z wyjaśnieniem werdyktu."""
+    """Uruchamia model3 i zwraca predykcje wraz z wyjaśnieniem werdyktu."""
     return await run_prediction(file, include_bands=include_bands)
 
 
