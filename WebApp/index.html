@@ -11,10 +11,16 @@
 <body>
     <header class="top-bar">
         <a id="aboutLink" class="top-bar-brand" href="#about" aria-label="O nas">
-            <span class="top-bar-mark">PH2</span>
+            <img src="../images/logo.png" style="width: 55px; height: 55px;" alt="PIHER2" class="top-bar-logo">
+            <style>
+                img {
+                    border-radius: 20%;
+                }
+            </style>
             <span>Biblioteka diagnostyczna</span>
         </a>
         <nav class="app-tabs" aria-label="Główne sekcje">
+            
             <button type="button" id="diagnosticsTab" class="app-tab active" aria-selected="true">Diagnostyka</button>
             <button type="button" id="todoTab" class="app-tab" aria-selected="false">
                 <span id="workspaceTabLabel">To-do</span> <span id="todoBadge" class="todo-badge" hidden>0</span>
