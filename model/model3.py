@@ -318,14 +318,26 @@ class MissingAwareTypeModel:
         observed_masks, inverse = np.unique(
             np.isfinite(residuals), axis=0, return_inverse=True
         )
+        precision_cache = getattr(self, "_precision_cache", None)
+        if precision_cache is None:
+            precision_cache = self._precision_cache = {}
         for mask_index, observed_mask in enumerate(observed_masks):
             rows = np.flatnonzero(inverse == mask_index)
             observed = np.flatnonzero(observed_mask)
             if not observed.size:
                 result[rows] = 1.0 / len(self.anomaly_classes)
                 continue
-            covariance = self.covariance[np.ix_(observed, observed)]
-            precision = np.linalg.pinv(covariance, hermitian=True)
+            cache_key = np.packbits(observed_mask).tobytes()
+            precision = precision_cache.get(cache_key)
+            if precision is None:
+                covariance = self.covariance[np.ix_(observed, observed)]
+                try:
+                    precision = np.linalg.inv(covariance)
+                except np.linalg.LinAlgError:
+                    precision = np.linalg.pinv(covariance, hermitian=True)
+                if len(precision_cache) >= 128:
+                    precision_cache.pop(next(iter(precision_cache)))
+                precision_cache[cache_key] = precision
             delta = (
                 residuals[rows, None, :][:, :, observed]
                 - self.class_means[None, :, :][:, :, observed]
@@ -422,9 +434,12 @@ class RobustProbabilityEnsemble:
         self.knn_imputer = knn_imputer
         self.anomaly_threshold = float(anomaly_threshold)
 
-    def _component_probabilities(self, raw_frame: pd.DataFrame):
+    def _component_probabilities(
+        self, raw_frame: pd.DataFrame, knn_prepared: pd.DataFrame | None = None
+    ):
         validate_schema(raw_frame)
-        knn_prepared = self.knn_imputer.transform(raw_frame)
+        if knn_prepared is None:
+            knn_prepared = self.knn_imputer.transform(raw_frame)
         try:
             peer_prepared = interpolate_raw_spectra(raw_frame)
         except ValueError as error:
@@ -469,9 +484,11 @@ class RobustProbabilityEnsemble:
             *self._component_probabilities(raw_frame)
         )
 
-    def predict_with_details(self, raw_frame: pd.DataFrame):
+    def predict_with_details(
+        self, raw_frame: pd.DataFrame, knn_prepared: pd.DataFrame | None = None
+    ):
         ridge_probabilities, knn_probabilities, type_probabilities = (
-            self._component_probabilities(raw_frame)
+            self._component_probabilities(raw_frame, knn_prepared=knn_prepared)
         )
         label_probability, severity_probability = self._average_components(
             ridge_probabilities, knn_probabilities, type_probabilities
@@ -623,13 +640,30 @@ def predict_and_explain(
     classifier_path: Path,
     explainer_path: Path,
     raw_frame: pd.DataFrame,
+    include_bands: bool = True,
+    include_band_scores: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     bundle, explainer = _load_server_artifacts(
         str(Path(classifier_path).resolve()), str(Path(explainer_path).resolve())
     )
     prepared = bundle.prepare(raw_frame)
-    prediction_with_confidence = prediction_frame(bundle, raw_frame)
-    explanations, bands = explainer.explain(prepared, prediction_with_confidence)
+    labels, severities, details = bundle.classifier.predict_with_details(
+        raw_frame, knn_prepared=prepared
+    )
+    prediction_with_confidence = raw_frame[
+        ["engine_id", "cylinder"]
+    ].reset_index(drop=True).copy()
+    prediction_with_confidence["label"] = labels
+    prediction_with_confidence["severity"] = severities
+    prediction_with_confidence["confidence"] = details["vote_confidence"]
+    for name, values in details.items():
+        prediction_with_confidence[name] = values
+    explanations, bands = explainer.explain(
+        prepared,
+        prediction_with_confidence,
+        include_bands=include_bands,
+        include_band_scores=include_band_scores,
+    )
     explanations = attach_optimization_audit(
         explanations,
         _no_confidence_optimization_audit(prediction_with_confidence),
@@ -690,7 +724,11 @@ def predict(
     """Zewnętrzne API zgodne z model2 i backendem serwera."""
     frame = _frame_from_server_input(data)
     _, explanations, bands = predict_and_explain(
-        Path(classifier_path), Path(explainer_path), frame
+        Path(classifier_path),
+        Path(explainer_path),
+        frame,
+        include_bands=include_bands,
+        include_band_scores=include_bands,
     )
     if display:
         display_explanations(explanations)
@@ -703,6 +741,64 @@ def predict(
     if include_bands:
         response["bands"] = json.loads(bands.to_json(orient="records"))
     return response
+
+
+def predict_stages(
+    data,
+    classifier_path: Path | str = MODEL_DIR / "acoustic_model3.pkl",
+    explainer_path: Path | str = MODEL_DIR / "verdict_explainer3.pkl",
+    include_bands: bool = False,
+):
+    """Zwraca predykcję przed obliczeniem pełnego wyjaśnienia."""
+    frame = _frame_from_server_input(data)
+    bundle, explainer = _load_server_artifacts(
+        str(Path(classifier_path).resolve()), str(Path(explainer_path).resolve())
+    )
+    prepared = bundle.prepare(frame)
+    labels, severities, details = bundle.classifier.predict_with_details(
+        frame, knn_prepared=prepared
+    )
+    predictions = frame[["engine_id", "cylinder"]].reset_index(drop=True).copy()
+    predictions["label"] = labels
+    predictions["severity"] = severities
+    predictions["confidence"] = details["vote_confidence"]
+    for name, values in details.items():
+        predictions[name] = values
+    quick_columns = [
+        "engine_id",
+        "cylinder",
+        "label",
+        "severity",
+        "confidence",
+        "vote_confidence",
+        "label_vote_confidence",
+        "severity_vote_confidence",
+        "n_model_votes",
+    ]
+    yield {
+        "stage": "predictions",
+        "results": json.loads(predictions[quick_columns].to_json(orient="records")),
+        "model_votes": int(predictions.n_model_votes.iloc[0]) if len(predictions) else 0,
+    }
+    explanations, bands = explainer.explain(
+        prepared,
+        predictions,
+        include_bands=include_bands,
+        include_band_scores=include_bands,
+    )
+    explanations = attach_optimization_audit(
+        explanations, _no_confidence_optimization_audit(predictions)
+    )
+    response = {
+        "stage": "complete",
+        "results": json.loads(explanations.to_json(orient="records")),
+        "model_votes": int(explanations.n_model_votes.iloc[0])
+        if len(explanations)
+        else 0,
+    }
+    if include_bands:
+        response["bands"] = json.loads(bands.to_json(orient="records"))
+    yield response
 
 
 def train_repeated_ensemble(

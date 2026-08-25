@@ -73,7 +73,9 @@ class Model2InterpolationTests(unittest.TestCase):
         missing_mask = prepared.attrs[IMPUTED_MASK_ATTR]
         classifier = load_exported_model(MODEL_DIR / "acoustic_model2.pkl")
         before = prediction_frame(classifier, prepared)
-        optimized, audit = optimize_imputed_spectra(classifier, prepared)
+        optimized, audit, reused_predictions = optimize_imputed_spectra(
+            classifier, prepared, return_predictions=True
+        )
         after = prediction_frame(classifier, optimized)
         before_values = prepared[FREQ_COLS].to_numpy(dtype=float)
         after_values = optimized[FREQ_COLS].to_numpy(dtype=float)
@@ -84,6 +86,13 @@ class Model2InterpolationTests(unittest.TestCase):
         self.assertTrue(np.isfinite(after_values[missing_mask]).all())
         np.testing.assert_array_equal(after.label, before.label)
         np.testing.assert_array_equal(after.severity, before.severity)
+        pd.testing.assert_frame_equal(
+            reused_predictions.reset_index(drop=True),
+            after.reset_index(drop=True),
+            check_dtype=False,
+            rtol=1e-12,
+            atol=1e-12,
+        )
         self.assertTrue(
             np.all(
                 after.vote_confidence.to_numpy()

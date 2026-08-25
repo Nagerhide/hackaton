@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unittest
 from unittest.mock import patch
 
@@ -65,6 +66,28 @@ class WebAppModelSelectionTests(unittest.TestCase):
         self.assertEqual(len(model3_response["results"]), len(engine))
         self.assertEqual(model3_response["model_votes"], 51)
         self.assertTrue(default_response["reference_profiles"])
+
+    def test_progressive_response_has_two_ndjson_stages(self):
+        frame = pd.read_csv(main.PROJECT_DIR / "tests" / "test.csv")
+        engine = frame[frame.engine_id.eq("test_0049")]
+        content = engine.to_csv(index=False).encode()
+
+        async def request_and_collect_body():
+            response = await main.run_progressive_prediction(
+                InMemoryUpload("engine.csv", content), model_name="model2"
+            )
+            chunks = []
+            async for chunk in response.body_iterator:
+                chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+            return response, "".join(chunks)
+
+        with patch.object(main, "run_in_threadpool", run_immediately):
+            response, body = asyncio.run(request_and_collect_body())
+        payloads = [json.loads(line) for line in body.splitlines()]
+        self.assertEqual([payload["stage"] for payload in payloads], ["predictions", "complete"])
+        self.assertNotIn("reference_profiles", payloads[0])
+        self.assertTrue(payloads[1]["reference_profiles"])
+        self.assertEqual(response.headers["x-accel-buffering"], "no")
 
 
 if __name__ == "__main__":

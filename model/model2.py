@@ -313,7 +313,9 @@ def optimize_imputed_spectra(
     imputed_mask: np.ndarray | None = None,
     confidence_threshold: float = LOW_CONFIDENCE_THRESHOLD,
     max_passes: int = 2,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+    return_predictions: bool = False,
+    baseline_predictions: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame] | tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Poprawia pewność, zmieniając wyłącznie brakujące punkty w bezpiecznym zakresie.
 
     Kandydaci są kwantylami rzeczywistych wartości pozostałych cylindrów tego
@@ -338,7 +340,13 @@ def optimize_imputed_spectra(
     if imputed_mask.shape != (len(frame), len(FREQ_COLS)):
         raise ValueError("Maska imputacji ma nieprawidłowy rozmiar")
 
-    baseline_predictions = prediction_frame(model, optimized)
+    if baseline_predictions is None:
+        baseline_predictions = prediction_frame(model, optimized)
+    else:
+        baseline_predictions = baseline_predictions.reset_index(drop=True).copy()
+        if len(baseline_predictions) != len(optimized):
+            raise ValueError("Bazowa predykcja ma nieprawidłową liczbę wierszy")
+    final_predictions = baseline_predictions.copy()
     before_label = baseline_predictions.label.to_numpy(dtype=object)
     before_severity = baseline_predictions.severity.to_numpy(dtype=object)
     before_confidence = baseline_predictions.vote_confidence.to_numpy(dtype=float)
@@ -507,6 +515,11 @@ def optimize_imputed_spectra(
         after_confidence[positions] = current_predictions.vote_confidence.to_numpy(
             dtype=float
         )
+        for column in final_predictions.columns:
+            column_index = final_predictions.columns.get_loc(column)
+            final_predictions.iloc[positions, column_index] = (
+                current_predictions[column].to_numpy()
+            )
 
     optimized.attrs[IMPUTED_MASK_ATTR] = imputed_mask
     audit = frame[["engine_id", "cylinder"]].reset_index(drop=True).copy()
@@ -523,6 +536,8 @@ def optimize_imputed_spectra(
         for columns in adjusted_columns
     ]
     audit["optimization_candidate_evaluations"] = candidate_evaluations
+    if return_predictions:
+        return optimized, audit, final_predictions
     return optimized, audit
 
 
@@ -777,6 +792,8 @@ class SpectralVerdictExplainer:
         frame: pd.DataFrame,
         predictions: pd.DataFrame,
         imputed_mask: np.ndarray | None = None,
+        include_bands: bool = True,
+        include_band_scores: bool = True,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         if len(frame) != len(predictions):
             raise ValueError("Dane i predykcje muszą mieć tyle samo wierszy")
@@ -799,9 +816,18 @@ class SpectralVerdictExplainer:
         summaries = []
         band_rows = []
         raw_spectrum = frame[FREQ_COLS].to_numpy(dtype=float)
+        engine_ids = frame.engine_id.to_numpy()
+        cylinders = frame.cylinder.to_numpy()
+        labels = predictions.label.astype(str).to_numpy()
+        severities = predictions.severity.astype(str).to_numpy()
+        vote_confidences = predictions.vote_confidence.to_numpy(dtype=float)
+        label_confidences = predictions.label_vote_confidence.to_numpy(dtype=float)
+        severity_confidences = predictions.severity_vote_confidence.to_numpy(dtype=float)
+        probability_scores = predictions.probability_score.to_numpy(dtype=float)
+        vote_counts = predictions.n_model_votes.to_numpy(dtype=int)
         for row_index in range(len(frame)):
-            label = str(predictions.iloc[row_index].label)
-            severity = str(predictions.iloc[row_index].severity)
+            label = labels[row_index]
+            severity = severities[row_index]
             observed_mask = ~imputed_mask[row_index]
             start, end, peak_score, smoothed = self._suspicious_interval(
                 anomaly_scores[row_index], label, observed_mask
@@ -847,23 +873,16 @@ class SpectralVerdictExplainer:
                 for column, was_imputed in zip(FREQ_COLS, imputed_mask[row_index])
                 if was_imputed
             ]
-            summaries.append(
-                {
-                    "engine_id": frame.iloc[row_index].engine_id,
-                    "cylinder": frame.iloc[row_index].cylinder,
+            summary = {
+                    "engine_id": engine_ids[row_index],
+                    "cylinder": cylinders[row_index],
                     "label": label,
                     "severity": severity,
-                    "vote_confidence": float(predictions.iloc[row_index].vote_confidence),
-                    "label_vote_confidence": float(
-                        predictions.iloc[row_index].label_vote_confidence
-                    ),
-                    "severity_vote_confidence": float(
-                        predictions.iloc[row_index].severity_vote_confidence
-                    ),
-                    "uncalibrated_probability_score": float(
-                        predictions.iloc[row_index].probability_score
-                    ),
-                    "n_model_votes": int(predictions.iloc[row_index].n_model_votes),
+                    "vote_confidence": vote_confidences[row_index],
+                    "label_vote_confidence": label_confidences[row_index],
+                    "severity_vote_confidence": severity_confidences[row_index],
+                    "uncalibrated_probability_score": probability_scores[row_index],
+                    "n_model_votes": vote_counts[row_index],
                     "suspicious_frequency_range": fragment,
                     "suspicious_columns": suspicious_columns,
                     "imputed_columns": ",".join(imputed_columns),
@@ -872,7 +891,9 @@ class SpectralVerdictExplainer:
                     "direction": direction,
                     "template_similarity": template_similarity,
                     "explanation": explanation,
-                    "band_scores_json": json.dumps(
+            }
+            if include_band_scores:
+                summary["band_scores_json"] = json.dumps(
                         {
                             column: None if was_imputed else round(float(score), 4)
                             for column, score, was_imputed in zip(
@@ -880,15 +901,16 @@ class SpectralVerdictExplainer:
                             )
                         },
                         ensure_ascii=False,
-                    ),
-                }
-            )
+                    )
+            summaries.append(summary)
+            if not include_bands:
+                continue
             for frequency, column in enumerate(FREQ_COLS):
                 was_imputed = bool(imputed_mask[row_index, frequency])
                 band_rows.append(
                     {
-                        "engine_id": frame.iloc[row_index].engine_id,
-                        "cylinder": frame.iloc[row_index].cylinder,
+                        "engine_id": engine_ids[row_index],
+                        "cylinder": cylinders[row_index],
                         "frequency_khz": frequency,
                         "column": column,
                         "amplitude_mv": (
@@ -944,15 +966,25 @@ def clear_model_cache() -> None:
 
 
 def predict_and_explain(
-    classifier_path: Path, explainer_path: Path, raw_frame: pd.DataFrame
+    classifier_path: Path,
+    explainer_path: Path,
+    raw_frame: pd.DataFrame,
+    include_bands: bool = True,
+    include_band_scores: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     prepared = interpolate_raw_spectra(raw_frame)
     classifier, explainer = _load_server_artifacts(
         str(classifier_path.resolve()), str(explainer_path.resolve())
     )
-    prepared, optimization_audit = optimize_imputed_spectra(classifier, prepared)
-    prediction_with_confidence = prediction_frame(classifier, prepared)
-    explanations, bands = explainer.explain(prepared, prediction_with_confidence)
+    prepared, optimization_audit, prediction_with_confidence = optimize_imputed_spectra(
+        classifier, prepared, return_predictions=True
+    )
+    explanations, bands = explainer.explain(
+        prepared,
+        prediction_with_confidence,
+        include_bands=include_bands,
+        include_band_scores=include_band_scores,
+    )
     explanations = attach_optimization_audit(explanations, optimization_audit)
     predictions = prediction_with_confidence[
         ["engine_id", "cylinder", "label", "severity"]
@@ -964,8 +996,10 @@ def predict_raw_data(classifier_path: Path, raw_frame: pd.DataFrame) -> pd.DataF
     """Kompatybilna inferencja klasyfikatora bez uruchamiania explainera."""
     prepared = interpolate_raw_spectra(raw_frame)
     classifier = load_exported_model(classifier_path)
-    prepared, _ = optimize_imputed_spectra(classifier, prepared)
-    return prediction_frame(classifier, prepared)[
+    prepared, _, predictions = optimize_imputed_spectra(
+        classifier, prepared, return_predictions=True
+    )
+    return predictions[
         ["engine_id", "cylinder", "label", "severity"]
     ].copy()
 
@@ -1018,7 +1052,11 @@ def predict(
     """
     frame = _frame_from_server_input(data)
     _, explanations, bands = predict_and_explain(
-        Path(classifier_path), Path(explainer_path), frame
+        Path(classifier_path),
+        Path(explainer_path),
+        frame,
+        include_bands=include_bands,
+        include_band_scores=include_bands,
     )
     if display:
         display_explanations(explanations)
@@ -1029,6 +1067,60 @@ def predict(
     if include_bands:
         response["bands"] = json.loads(bands.to_json(orient="records"))
     return response
+
+
+def predict_stages(
+    data,
+    classifier_path: Path | str = MODEL_DIR / "acoustic_model2.pkl",
+    explainer_path: Path | str = MODEL_DIR / "verdict_explainer.pkl",
+    include_bands: bool = False,
+):
+    """Zwraca najpierw werdykt bazowy, potem pełny wynik z wyjaśnieniem."""
+    frame = _frame_from_server_input(data)
+    prepared = interpolate_raw_spectra(frame)
+    classifier, explainer = _load_server_artifacts(
+        str(Path(classifier_path).resolve()), str(Path(explainer_path).resolve())
+    )
+    baseline = prediction_frame(classifier, prepared)
+    quick_columns = [
+        "engine_id",
+        "cylinder",
+        "label",
+        "severity",
+        "confidence",
+        "vote_confidence",
+        "label_vote_confidence",
+        "severity_vote_confidence",
+        "n_model_votes",
+    ]
+    yield {
+        "stage": "predictions",
+        "results": json.loads(baseline[quick_columns].to_json(orient="records")),
+        "model_votes": int(baseline.n_model_votes.iloc[0]) if len(baseline) else 0,
+    }
+    prepared, audit, final_predictions = optimize_imputed_spectra(
+        classifier,
+        prepared,
+        return_predictions=True,
+        baseline_predictions=baseline,
+    )
+    explanations, bands = explainer.explain(
+        prepared,
+        final_predictions,
+        include_bands=include_bands,
+        include_band_scores=include_bands,
+    )
+    explanations = attach_optimization_audit(explanations, audit)
+    response = {
+        "stage": "complete",
+        "results": json.loads(explanations.to_json(orient="records")),
+        "model_votes": int(explanations.n_model_votes.iloc[0])
+        if len(explanations)
+        else 0,
+    }
+    if include_bands:
+        response["bands"] = json.loads(bands.to_json(orient="records"))
+    yield response
 
 
 def parse_args():

@@ -19,6 +19,7 @@ let activeModelName = "model2";
 let diagnosticNavigator = null;
 let diagnosticPredictions = [];
 let diagnosticSourceRows = [];
+const sourceTextCache = new WeakMap();
 
 function apiUrl(path) {
     return `${API_BASE_URL}${path}`;
@@ -361,6 +362,18 @@ async function readSourceCsv(file) {
         throw new Error(error || "Nie udało się odczytać pliku ZIP.");
     }
     return response.text();
+}
+
+function readSourceCsvCached(file) {
+    let pending = sourceTextCache.get(file);
+    if (!pending) {
+        pending = readSourceCsv(file).catch(error => {
+            sourceTextCache.delete(file);
+            throw error;
+        });
+        sourceTextCache.set(file, pending);
+    }
+    return pending;
 }
 
 function drawCylinderGraph(canvas, source, state, {
@@ -1288,6 +1301,20 @@ function renderEngineRanking(predictions, sourceRows) {
     renderRanking();
 }
 
+function hideFilePreview(clearStatus = true) {
+    const previewPanel = document.getElementById("previewPanel");
+    const preview = document.getElementById("preview");
+    const status = document.getElementById("status");
+    previewPanel.style.display = "none";
+    preview.textContent = "";
+    previewButton.setAttribute("aria-expanded", "false");
+    if (clearStatus && status.textContent.startsWith("Podgląd pliku:")) {
+        status.textContent = "";
+    }
+}
+
+document.getElementById("file").addEventListener("change", () => hideFilePreview());
+
 previewButton.addEventListener("click", async function () {
     const input = document.getElementById("file");
     const status = document.getElementById("status");
@@ -1296,7 +1323,7 @@ previewButton.addEventListener("click", async function () {
     const file = input.files[0];
 
     if (previewPanel.style.display === "block") {
-        previewPanel.style.display = "none";
+        hideFilePreview();
         return;
     }
 
@@ -1313,10 +1340,11 @@ previewButton.addEventListener("click", async function () {
     }
 
     try {
-        const fullText = await readSourceCsv(file);
+        const fullText = await readSourceCsvCached(file);
         const text = fullText.slice(0, 1000);
         preview.textContent = `${text}${fullText.length > 1000 ? "\n..." : ""}` || "Plik jest pusty.";
         previewPanel.style.display = "block";
+        previewButton.setAttribute("aria-expanded", "true");
         status.textContent = `Podgląd pliku: ${file.name}`;
     } catch (error) {
         console.error("PREVIEW ERROR:", error);
@@ -1326,8 +1354,70 @@ previewButton.addEventListener("click", async function () {
 });
 
 closePreviewButton.addEventListener("click", function () {
-    document.getElementById("previewPanel").style.display = "none";
+    hideFilePreview();
 });
+
+function showPreliminaryPrediction(payload, sourceRows, selectedModel) {
+    if (!payload || !Array.isArray(payload.results)) return;
+    const predictions = payload.results;
+    const isValidationFile = sourceRows.some(row =>
+        Object.prototype.hasOwnProperty.call(row, "label")
+        && Object.prototype.hasOwnProperty.call(row, "severity")
+    );
+    activeModelName = payload.selected_model || selectedModel;
+    diagnosticPredictions = predictions;
+    diagnosticSourceRows = sourceRows;
+    renderHealthPanel(predictions, sourceRows, isValidationFile);
+    renderEngineRanking(predictions, sourceRows);
+    renderFaultChart(predictions);
+    document.getElementById("status").textContent =
+        `Predykcja ${activeModelName} jest gotowa. Trwa tworzenie wyjaśnień…`;
+}
+
+async function readPredictionResponse(response, sourceRows, selectedModel) {
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.includes("application/x-ndjson")) {
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+            throw new Error(payload?.detail || `Serwer zwrócił błąd HTTP ${response.status}.`);
+        }
+        return payload;
+    }
+
+    if (!response.ok || !response.body) {
+        throw new Error(`Serwer zwrócił błąd HTTP ${response.status}.`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalPayload = null;
+
+    const consumeLine = line => {
+        if (!line.trim()) return;
+        const payload = JSON.parse(line);
+        if (payload.stage === "error") {
+            throw new Error(payload.detail || "Nie udało się utworzyć predykcji.");
+        }
+        if (payload.stage === "predictions") {
+            showPreliminaryPrediction(payload, sourceRows, selectedModel);
+        } else if (payload.stage === "complete") {
+            finalPayload = payload;
+        }
+    };
+
+    while (true) {
+        const { value, done } = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        lines.forEach(consumeLine);
+        if (done) break;
+    }
+    consumeLine(buffer);
+    if (!finalPayload) throw new Error("Serwer nie przesłał kompletnego wyniku predykcji.");
+    return finalPayload;
+}
 
 button.addEventListener("click", async function () {
     const input = document.getElementById("file");
@@ -1337,6 +1427,7 @@ button.addEventListener("click", async function () {
     const engineRankingPanel = document.getElementById("engineRankingPanel");
     const faultChartPanel = document.getElementById("faultChartPanel");
     const selectedModel = document.getElementById("modelSelect").value || "model2";
+    const progressive = document.getElementById("progressiveResults").checked;
 
     const file = input.files[0];
 
@@ -1363,6 +1454,7 @@ button.addEventListener("click", async function () {
     formData.append("file", file);
 
     status.textContent = "Przetwarzanie...";
+    hideFilePreview(false);
     diagnosticNavigator = null;
     diagnosticPredictions = [];
     diagnosticSourceRows = [];
@@ -1372,14 +1464,16 @@ button.addEventListener("click", async function () {
     faultChartPanel.style.display = "none";
 
     try {
-        const response = await fetch(apiUrl(`/api/predict?model=${encodeURIComponent(selectedModel)}`), {
+        const sourceTextPromise = readSourceCsvCached(file);
+        const query = new URLSearchParams({ model: selectedModel });
+        if (progressive) query.set("progressive", "true");
+        const responsePromise = fetch(apiUrl(`/api/predict?${query.toString()}`), {
             method: "POST",
             body: formData
         });
-        const payload = await response.json().catch(() => null);
-        if (!response.ok) {
-            throw new Error(payload?.detail || `Serwer zwrócił błąd HTTP ${response.status}.`);
-        }
+        const [response, sourceText] = await Promise.all([responsePromise, sourceTextPromise]);
+        const sourceRows = parseCsv(sourceText);
+        const payload = await readPredictionResponse(response, sourceRows, selectedModel);
         if (!payload || !Array.isArray(payload.results)) {
             throw new Error("Serwer zwrócił nieprawidłowy format odpowiedzi modelu.");
         }
@@ -1391,8 +1485,6 @@ button.addEventListener("click", async function () {
             : [];
         referenceSpectraSource = payload.reference_spectra_source || "valid.csv";
         const predictions = payload.results;
-        const sourceText = await readSourceCsv(file);
-        const sourceRows = parseCsv(sourceText);
         diagnosticPredictions = predictions;
         diagnosticSourceRows = sourceRows;
         const isValidationFile = sourceRows.some(row =>
@@ -1432,12 +1524,12 @@ button.addEventListener("click", async function () {
         });
 
         const voteInfo = payload.model_votes
-            ? ``
+            ? ` Głosowało ${payload.model_votes} modeli.`
             : "";
         const modelLabel = payload.selected_model || selectedModel;
         status.textContent = isValidationFile
-            ? `Analiza zakończona.${voteInfo}`
-            : `Predykcja zakończona.${voteInfo}`;
+            ? `Analiza ${modelLabel} zakończona.${voteInfo}`
+            : `Predykcja ${modelLabel} zakończona.${voteInfo}`;
     } catch (error) {
         console.error("ERROR:", error);
         status.textContent = "Błąd: " + error.message;

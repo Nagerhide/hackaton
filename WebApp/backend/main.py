@@ -16,7 +16,8 @@ import pandas as pd
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 
@@ -36,7 +37,11 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from model2 import predict as model2_predict  # noqa: E402
+from model2 import predict_stages as model2_predict_stages  # noqa: E402
+from model2 import _load_server_artifacts as load_model2_artifacts  # noqa: E402
 from model3 import predict as model3_predict  # noqa: E402
+from model3 import predict_stages as model3_predict_stages  # noqa: E402
+from model3 import _load_server_artifacts as load_model3_artifacts  # noqa: E402
 from WebApp.backend.model1_adapter import predict as model1_predict  # noqa: E402
 from WebApp.backend.store import AppStore, StoreError  # noqa: E402
 
@@ -50,11 +55,13 @@ MODEL_CONFIGS = {
     },
     "model2": {
         "predict": model2_predict,
+        "predict_stages": model2_predict_stages,
         "classifier": MODEL_DIR / "acoustic_model2.pkl",
         "explainer": MODEL_DIR / "verdict_explainer.pkl",
     },
     "model3": {
         "predict": model3_predict,
+        "predict_stages": model3_predict_stages,
         "classifier": MODEL_DIR / "acoustic_model3.pkl",
         "explainer": MODEL_DIR / "verdict_explainer3.pkl",
     },
@@ -84,6 +91,26 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
+
+
+@app.on_event("startup")
+def preload_model_artifacts() -> None:
+    """Przenosi koszt rozpakowania modeli z pierwszego żądania na start API."""
+    for name, loader in (
+        ("model2", load_model2_artifacts),
+        ("model3", load_model3_artifacts),
+    ):
+        config = MODEL_CONFIGS[name]
+        if not model_artifacts_ready(config):
+            continue
+        try:
+            loader(
+                str(config["classifier"].resolve()),
+                str(config["explainer"].resolve()),
+            )
+        except Exception:
+            LOGGER.exception("Nie udało się wstępnie wczytać %s", name)
 
 
 class AccountRequest(BaseModel):
@@ -277,6 +304,70 @@ async def run_prediction(
     return response
 
 
+async def run_progressive_prediction(
+    file: UploadFile,
+    include_bands: bool = False,
+    model_name: str = DEFAULT_MODEL,
+) -> StreamingResponse:
+    data = await read_uploaded_csv(file)
+    frame = parse_csv(data)
+    model_name = str(model_name).lower()
+    model_config = MODEL_CONFIGS.get(model_name)
+    if model_config is None or not model_config.get("predict_stages"):
+        raise HTTPException(status_code=422, detail="Ten model nie obsługuje trybu progresywnego.")
+    if not model_artifacts_ready(model_config):
+        raise HTTPException(status_code=503, detail=f"Artefakty {model_name} nie są dostępne.")
+    reference_data = load_reference_spectra()
+
+    def next_stage(iterator):
+        try:
+            return False, next(iterator)
+        except StopIteration:
+            return True, None
+
+    async def stages():
+        try:
+            iterator = model_config["predict_stages"](
+                frame,
+                classifier_path=model_config["classifier"],
+                explainer_path=model_config.get("explainer"),
+                include_bands=include_bands,
+            )
+            while True:
+                finished, payload = await run_in_threadpool(next_stage, iterator)
+                if finished:
+                    break
+                payload["selected_model"] = model_name
+                payload["input_rows"] = len(frame)
+                if payload.get("stage") == "complete":
+                    payload["reference_spectra"] = reference_data["by_label"]
+                    payload["reference_profiles"] = reference_data["profiles"]
+                    payload["reference_spectra_source"] = reference_data.get("source")
+                yield json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+        except (KeyError, TypeError, ValueError) as error:
+            yield json.dumps(
+                {"stage": "error", "detail": str(error)},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ) + "\n"
+        except Exception:
+            LOGGER.exception("Predykcja progresywna %s nie powiodła się", model_name)
+            yield json.dumps(
+                {"stage": "error", "detail": f"Predykcja {model_name} nie powiodła się."},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ) + "\n"
+
+    return StreamingResponse(
+        stages(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.get("/api/health")
 def health_check() -> dict:
     models = {
@@ -416,8 +507,13 @@ async def prediction(
     file: UploadFile = File(...),
     include_bands: bool = False,
     model: str = DEFAULT_MODEL,
-) -> dict:
+    progressive: bool = False,
+):
     """Uruchamia wybrany model i zwraca predykcje wraz z wyjaśnieniem."""
+    if progressive and MODEL_CONFIGS.get(str(model).lower(), {}).get("predict_stages"):
+        return await run_progressive_prediction(
+            file, include_bands=include_bands, model_name=model
+        )
     return await run_prediction(file, include_bands=include_bands, model_name=model)
 
 

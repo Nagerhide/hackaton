@@ -24,6 +24,7 @@ from model3 import (  # noqa: E402
     decode_probabilities3,
     load_exported_model,
     predict,
+    predict_stages,
 )
 
 
@@ -142,6 +143,28 @@ class Model3Tests(unittest.TestCase):
             {"engine_id", "cylinder", "label", "severity", "vote_confidence"}
             <= set(response["results"][0])
         )
+        self.assertNotIn("band_scores_json", response["results"][0])
+        self.assertNotIn("bands", response)
+
+    def test_progressive_api_returns_prediction_before_explanation(self):
+        classifier_path = MODEL_DIR / "acoustic_model3.pkl"
+        explainer_path = MODEL_DIR / "verdict_explainer3.pkl"
+        if not classifier_path.exists() or not explainer_path.exists():
+            self.skipTest("Najpierw uruchom model/model3.py")
+        engine = self.test[self.test.engine_id.eq("test_0049")]
+        stages = list(
+            predict_stages(
+                engine,
+                classifier_path=classifier_path,
+                explainer_path=explainer_path,
+            )
+        )
+
+        self.assertEqual([stage["stage"] for stage in stages], ["predictions", "complete"])
+        self.assertEqual(len(stages[0]["results"]), len(engine))
+        self.assertNotIn("explanation", stages[0]["results"][0])
+        self.assertIn("explanation", stages[1]["results"][0])
+        self.assertNotIn("band_scores_json", stages[1]["results"][0])
 
 
 if __name__ == "__main__":
