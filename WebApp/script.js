@@ -16,6 +16,7 @@ let todoItems = [];
 let todoFilter = "all";
 let todoEditorContext = null;
 let activeModelName = "model2";
+let diagnosticNavigator = null;
 
 function apiUrl(path) {
     return `${API_BASE_URL}${path}`;
@@ -679,6 +680,7 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
             button.className = `cylinder ${state}`;
             button.setAttribute("aria-pressed", "false");
             button.dataset.cylinderLabel = `Cylinder ${row.cylinder}`;
+            button.dataset.cylinderNumber = String(row.cylinder);
             button.title = `Pokaż szczegóły: cylinder ${row.cylinder}, stan: ${statusText}`;
             button.style.animationDelay = `${index * 45}ms`;
             number.className = "cylinder-number";
@@ -1042,6 +1044,24 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
         updateCylinderNavigation();
     }
 
+    diagnosticNavigator = (engineId, cylinder) => {
+        const normalizedEngineId = String(engineId);
+        const hasEngine = [...engineSelect.options]
+            .some(option => option.value === normalizedEngineId);
+        if (!hasEngine) return false;
+        engineSelect.value = normalizedEngineId;
+        engineSelect.dispatchEvent(new Event("change"));
+        const cylinderButton = [...grid.querySelectorAll(".cylinder")]
+            .find(item => item.dataset.cylinderNumber === String(cylinder));
+        if (cylinderButton) cylinderButton.click();
+        requestAnimationFrame(() => {
+            const target = cylinderButton || document.getElementById("healthPanel");
+            const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+            target.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "center" });
+        });
+        return true;
+    };
+
     engineSelect.onchange = displayEngine;
     panel.style.display = "none";
     displayEngine();
@@ -1341,6 +1361,7 @@ button.addEventListener("click", async function () {
     formData.append("file", file);
 
     status.textContent = "Przetwarzanie...";
+    diagnosticNavigator = null;
     download.style.display = "none";
     healthPanel.style.display = "none";
     engineRankingPanel.style.display = "none";
@@ -1479,11 +1500,13 @@ function clearSession(refresh = true) {
 
 function updateAccountInterface() {
     const loggedIn = Boolean(currentUser);
+    const manager = loggedIn && currentUser.role === "manager";
     document.getElementById("guestActions").hidden = loggedIn;
     document.getElementById("userActions").hidden = !loggedIn;
     document.getElementById("todoGuestPanel").hidden = loggedIn;
     document.getElementById("todoWorkspace").hidden = !loggedIn;
-    document.getElementById("addEmployeeButton").hidden = !loggedIn || currentUser.role !== "manager";
+    document.getElementById("addEmployeeButton").hidden = !manager;
+    document.getElementById("employeeDirectory").hidden = !manager;
     document.getElementById("currentUserLabel").textContent = loggedIn
         ? `${currentUser.display_name} · ${currentUser.role === "manager" ? "przełożony" : "pracownik"}`
         : "";
@@ -1493,6 +1516,7 @@ function updateAccountInterface() {
             : "Twoje zadania serwisowe i zakończone naprawy.")
         : "Zaloguj się, aby zapisywać zadania serwisowe.";
     updateEmployeeControls();
+    renderEmployeeDirectory();
     updateTodoBadge();
 }
 
@@ -1519,11 +1543,63 @@ async function loadEmployees() {
     if (!currentUser || currentUser.role !== "manager") {
         employees = [];
         updateEmployeeControls();
+        renderEmployeeDirectory();
         return;
     }
     const payload = await apiRequest("/api/employees");
     employees = payload.employees || [];
     updateEmployeeControls();
+    renderEmployeeDirectory();
+}
+
+function openEmployeePasswordDialog(employee) {
+    const form = document.getElementById("employeePasswordForm");
+    form.reset();
+    document.getElementById("passwordEmployeeId").value = employee.id;
+    document.getElementById("passwordEmployeeName").textContent =
+        `${employee.display_name} · login: ${employee.username}`;
+    setFormMessage(document.getElementById("employeePasswordMessage"));
+    openDialog(document.getElementById("employeePasswordDialog"));
+    requestAnimationFrame(() => document.getElementById("newEmployeePassword").focus());
+}
+
+function renderEmployeeDirectory() {
+    const directory = document.getElementById("employeeDirectory");
+    const list = document.getElementById("employeeList");
+    const empty = document.getElementById("employeeListEmpty");
+    const manager = currentUser?.role === "manager";
+    directory.hidden = !manager;
+    if (!manager) {
+        list.replaceChildren();
+        empty.hidden = true;
+        return;
+    }
+    const cards = employees.map(employee => {
+        const card = document.createElement("article");
+        const identity = document.createElement("div");
+        const name = document.createElement("strong");
+        const login = document.createElement("span");
+        const counts = document.createElement("span");
+        const passwordButton = document.createElement("button");
+        card.className = "employee-card";
+        identity.className = "employee-identity";
+        name.textContent = employee.display_name || employee.username;
+        login.textContent = `Login: ${employee.username}`;
+        const employeeTodos = todoItems.filter(item => item.owner_id === employee.id);
+        const doneCount = employeeTodos.filter(item => item.status === "done").length;
+        const todoCount = employeeTodos.length;
+        counts.className = "employee-task-count";
+        counts.textContent = `${doneCount}/${todoCount} zakończonych`;
+        passwordButton.type = "button";
+        passwordButton.className = "secondary-button employee-password-button";
+        passwordButton.textContent = "Zmień hasło";
+        passwordButton.onclick = () => openEmployeePasswordDialog(employee);
+        identity.append(name, login);
+        card.append(identity, counts, passwordButton);
+        return card;
+    });
+    list.replaceChildren(...cards);
+    empty.hidden = employees.length > 0;
 }
 
 function accountOptions(includeAll = false) {
@@ -1568,6 +1644,7 @@ async function loadTodos() {
     }
     const payload = await apiRequest("/api/todos");
     todoItems = payload.todos || [];
+    renderEmployeeDirectory();
     renderTodos();
 }
 
@@ -1631,6 +1708,17 @@ function filteredTodos() {
     });
 }
 
+function updateActiveTodoFilter() {
+    const output = document.getElementById("activeTodoFilter");
+    const statusLabel = todoFilter === "all" ? "Wszystkie" : todoStatusName(todoFilter);
+    let ownerLabel = "";
+    if (currentUser?.role === "manager") {
+        const selectedOption = document.getElementById("employeeFilter").selectedOptions[0];
+        ownerLabel = selectedOption ? ` · osoba: ${selectedOption.textContent}` : "";
+    }
+    output.textContent = `Wybrany filtr: ${statusLabel}${ownerLabel}`;
+}
+
 function renderEmployeeSummary(items) {
     const summary = document.getElementById("employeeSummary");
     if (currentUser?.role !== "manager") {
@@ -1662,6 +1750,9 @@ function createTodoCard(item) {
 
     card.className = "todo-card";
     card.dataset.status = item.status;
+    card.tabIndex = 0;
+    card.title = `Otwórz silnik ${item.engine_id}, cylinder ${item.cylinder}`;
+    card.setAttribute("aria-label", card.title);
     thumbnail.className = `todo-thumbnail ${item.severity}`;
     thumbnailTitle.textContent = `Cylinder ${item.cylinder}`;
     canvas.setAttribute("aria-label", `Miniatura widma cylindra ${item.cylinder}`);
@@ -1714,6 +1805,14 @@ function createTodoCard(item) {
     actions.append(status, edit, remove);
     content.append(owner, title, meta, note, actions);
     card.append(thumbnail, content);
+    const navigate = event => {
+        if (event.target.closest("button, select, input, textarea, a")) return;
+        if (event.type === "keydown" && event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        navigateToTodoCylinder(item);
+    };
+    card.addEventListener("click", navigate);
+    card.addEventListener("keydown", navigate);
     requestAnimationFrame(() => drawTodoThumbnail(canvas, item.spectrum, item.severity));
     return card;
 }
@@ -1727,6 +1826,7 @@ function renderTodos() {
         updateTodoBadge();
         return;
     }
+    updateActiveTodoFilter();
     const items = filteredTodos();
     board.replaceChildren(...items.map(createTodoCard));
     empty.hidden = items.length > 0;
@@ -1788,6 +1888,18 @@ function openTodoEditorForItem(item) {
     showTodoEditor({ ...item });
 }
 
+function navigateToTodoCylinder(item) {
+    switchAppView("diagnostics");
+    const found = diagnosticNavigator?.(item.engine_id, item.cylinder) || false;
+    const status = document.getElementById("status");
+    if (found) {
+        status.textContent = `Otwarto silnik ${item.engine_id}, cylinder ${item.cylinder}.`;
+        return;
+    }
+    status.textContent = `Wczytaj plik zawierający silnik ${item.engine_id}, aby otworzyć cylinder ${item.cylinder}.`;
+    requestAnimationFrame(() => document.querySelector(".upload-box").scrollIntoView({ behavior: "smooth", block: "center" }));
+}
+
 function switchAppView(name) {
     const todo = name === "todo";
     document.getElementById("diagnosticsView").hidden = todo;
@@ -1814,6 +1926,12 @@ async function restoreSession() {
     } catch {
         clearSession();
     }
+}
+
+function showEmployeeCreationDialog() {
+    document.getElementById("employeeForm").reset();
+    setFormMessage(document.getElementById("employeeMessage"));
+    openDialog(document.getElementById("employeeDialog"));
 }
 
 function initializeAccountsAndTodos() {
@@ -1856,11 +1974,8 @@ function initializeAccountsAndTodos() {
             setFormMessage(message, error.message, "error");
         }
     });
-    document.getElementById("addEmployeeButton").onclick = () => {
-        document.getElementById("employeeForm").reset();
-        setFormMessage(document.getElementById("employeeMessage"));
-        openDialog(document.getElementById("employeeDialog"));
-    };
+    document.getElementById("addEmployeeButton").onclick = showEmployeeCreationDialog;
+    document.getElementById("directoryAddEmployeeButton").onclick = showEmployeeCreationDialog;
     document.getElementById("employeeForm").addEventListener("submit", async event => {
         event.preventDefault();
         const message = document.getElementById("employeeMessage");
@@ -1876,6 +1991,28 @@ function initializeAccountsAndTodos() {
             setFormMessage(message, "Konto pracownika zostało utworzone.", "success");
             await loadWorkspaceData();
             setTimeout(() => closeDialog(document.getElementById("employeeDialog")), 700);
+        } catch (error) {
+            setFormMessage(message, error.message, "error");
+        }
+    });
+    document.getElementById("employeePasswordForm").addEventListener("submit", async event => {
+        event.preventDefault();
+        const message = document.getElementById("employeePasswordMessage");
+        const password = document.getElementById("newEmployeePassword").value;
+        const confirmation = document.getElementById("confirmEmployeePassword").value;
+        if (password !== confirmation) {
+            setFormMessage(message, "Hasła nie są takie same.", "error");
+            return;
+        }
+        const employeeId = Number(document.getElementById("passwordEmployeeId").value);
+        setFormMessage(message, "Zapisywanie...");
+        try {
+            await apiRequest(`/api/employees/${employeeId}/password`, {
+                method: "PATCH",
+                body: { password }
+            });
+            setFormMessage(message, "Hasło zostało zmienione, a stare sesje wylogowane.", "success");
+            setTimeout(() => closeDialog(document.getElementById("employeePasswordDialog")), 900);
         } catch (error) {
             setFormMessage(message, error.message, "error");
         }
@@ -1912,7 +2049,11 @@ function initializeAccountsAndTodos() {
     document.querySelectorAll("[data-todo-filter]").forEach(control => {
         control.onclick = () => {
             todoFilter = control.dataset.todoFilter;
-            document.querySelectorAll("[data-todo-filter]").forEach(button => button.classList.toggle("active", button === control));
+            document.querySelectorAll("[data-todo-filter]").forEach(button => {
+                const selected = button === control;
+                button.classList.toggle("active", selected);
+                button.setAttribute("aria-pressed", String(selected));
+            });
             renderTodos();
         };
     });

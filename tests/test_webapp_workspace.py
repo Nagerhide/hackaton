@@ -23,6 +23,7 @@ class WorkspaceStoreTests(unittest.TestCase):
             self.manager, "employee", "employee-pass", "Mechanik"
         )
         employee_session = self.store.login("employee", "employee-pass")
+        self.employee_token = employee_session["token"]
         self.employee_actor = self.store.user_for_token(employee_session["token"])
 
     def tearDown(self):
@@ -118,6 +119,40 @@ class WorkspaceStoreTests(unittest.TestCase):
         with self.assertRaises(StoreError) as error:
             self.store.user_for_token(session["token"])
         self.assertEqual(error.exception.status_code, 401)
+
+    def test_manager_changes_employee_password_and_revokes_old_session(self):
+        changed = self.store.change_employee_password(
+            self.manager, self.employee["id"], "new-employee-pass"
+        )
+
+        self.assertEqual(changed["username"], "employee")
+        with self.assertRaises(StoreError) as expired:
+            self.store.user_for_token(self.employee_token)
+        self.assertEqual(expired.exception.status_code, 401)
+        with self.assertRaises(StoreError):
+            self.store.login("employee", "employee-pass")
+        new_session = self.store.login("employee", "new-employee-pass")
+        self.assertEqual(new_session["user"]["id"], self.employee["id"])
+
+    def test_employee_cannot_change_another_employee_password(self):
+        with self.assertRaises(StoreError) as forbidden:
+            self.store.change_employee_password(
+                self.employee_actor, self.employee["id"], "not-allowed-pass"
+            )
+        self.assertEqual(forbidden.exception.status_code, 403)
+
+    def test_manager_cannot_change_password_outside_own_team(self):
+        session = self.store.register("other", "other-pass", "Inny kierownik")
+        other_manager = self.store.user_for_token(session["token"])
+        outsider = self.store.create_employee(
+            other_manager, "outsider", "outsider-pass", "Obcy pracownik"
+        )
+
+        with self.assertRaises(StoreError) as missing:
+            self.store.change_employee_password(
+                self.manager, outsider["id"], "not-allowed-pass"
+            )
+        self.assertEqual(missing.exception.status_code, 404)
 
 
 if __name__ == "__main__":

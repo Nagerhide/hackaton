@@ -297,6 +297,31 @@ class AppStore:
             for row in rows
         ]
 
+    def change_employee_password(
+        self, manager: dict[str, Any], employee_id: int, new_password: str
+    ) -> dict[str, Any]:
+        """Zmienia hasło bez ujawniania starego i wylogowuje pracownika."""
+        if manager["role"] != "manager":
+            raise StoreError(403, "Tylko przełożony może zmienić hasło pracownika.")
+        with self.connect() as connection:
+            employee = connection.execute(
+                """
+                SELECT * FROM users
+                WHERE id = ? AND role = 'employee' AND manager_id = ?
+                """,
+                (int(employee_id), int(manager["id"])),
+            ).fetchone()
+            if employee is None:
+                raise StoreError(404, "Nie znaleziono pracownika w Twoim zespole.")
+            connection.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (password_hash(new_password), int(employee_id)),
+            )
+            connection.execute(
+                "DELETE FROM sessions WHERE user_id = ?", (int(employee_id),)
+            )
+        return public_user(employee)
+
     def _accessible_owner(
         self, actor: dict[str, Any], owner_id: int | None
     ) -> sqlite3.Row:

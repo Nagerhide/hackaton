@@ -28,14 +28,20 @@ Backend automatycznie wykrywa artefakty obu modeli:
 
 Diagnostyka oraz wybór modelu działają bez logowania. Rejestracja tworzy konto
 przełożonego, który może następnie zakładać konta pracowników i przekazać im
-login z hasłem startowym. Przełożony widzi swoje zadania oraz zadania wyłącznie
-swoich pracowników; pracownik widzi i zmienia tylko własną listę.
+login z hasłem startowym. Lista zespołu pokazuje imię i nazwisko, login oraz
+liczbę zakończonych zadań. Przełożony może ustawić pracownikowi nowe hasło;
+operacja unieważnia wszystkie wcześniejsze sesje tego pracownika. Przełożony
+widzi swoje zadania oraz zadania wyłącznie swoich pracowników; pracownik widzi
+i zmienia tylko własną listę.
 
 W szczegółach cylindra przycisk `+` tworzy zadanie zawierające miniaturę widma,
 numer silnika, numer cylindra, rozpoznaną usterkę i powagę. W osobnej zakładce
 To-do można poprawić opis usterki, dopisać sposób naprawy, przypisać pracownika
 oraz ustawić stan `Do zrobienia`, `W trakcie` albo `Skończone`. Zakończone
 zadania pozostają w historii i można je filtrować.
+Aktywny filtr jest wskazany kolorem, znacznikiem i tekstowym podsumowaniem.
+Kliknięcie karty zadania przechodzi do odpowiadającego silnika i cylindra w
+aktualnie wczytanym pliku diagnostycznym.
 
 Konta, sesje i zadania są trwale zapisywane w lokalnej bazie SQLite
 `WebApp/backend/piher2.sqlite3`, tworzonej przy pierwszym uruchomieniu. Inną
@@ -153,5 +159,6 @@ Endpointy kont i zadań używają nagłówka `Authorization: Bearer <token>`:
 
 - `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`;
 - `GET /api/auth/me`;
-- `GET/POST /api/employees` dla przełożonego;
+- `GET/POST /api/employees` oraz
+  `PATCH /api/employees/{id}/password` dla przełożonego;
 - `GET/POST /api/todos` oraz `PATCH/DELETE /api/todos/{id}`.

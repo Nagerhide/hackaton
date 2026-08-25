@@ -90,6 +90,10 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class PasswordChangeRequest(BaseModel):
+    password: str = Field(min_length=8, max_length=256)
+
+
 class TodoCreateRequest(BaseModel):
     owner_id: int | None = None
     engine_id: str = Field(min_length=1, max_length=100)
@@ -323,6 +327,18 @@ def add_employee(
         request.username,
         request.password,
         request.display_name,
+    )
+    return {"employee": employee}
+
+
+@app.patch("/api/employees/{employee_id}/password")
+def change_employee_password(
+    employee_id: int,
+    request: PasswordChangeRequest,
+    user: dict = Depends(current_user),
+) -> dict:
+    employee = store_result(
+        STORE.change_employee_password, user, employee_id, request.password
     )
     return {"employee": employee}
 
