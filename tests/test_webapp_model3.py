@@ -1,4 +1,4 @@
-"""Test regresyjny podłączenia model3 do backendu WebApp."""
+"""Test regresyjny wyboru model2/model3 w backendzie WebApp."""
 
 from __future__ import annotations
 
@@ -25,30 +25,38 @@ class InMemoryUpload:
         return self.content if size < 0 else self.content[:size]
 
 
-class WebAppModel3Tests(unittest.TestCase):
-    def test_health_reports_model3_artifacts(self):
+class WebAppModelSelectionTests(unittest.TestCase):
+    def test_health_reports_both_models_and_model2_as_default(self):
         health = main.health_check()
 
         self.assertEqual(health["status"], "ok")
-        self.assertEqual(health["service"], "model3-prediction-api")
-        self.assertEqual(health["version"], "3.0")
-        self.assertEqual(health["model"], "acoustic_model3.pkl")
-        self.assertEqual(health["explainer"], "verdict_explainer3.pkl")
+        self.assertEqual(health["service"], "piher2-prediction-api")
+        self.assertEqual(health["version"], "4.0")
+        self.assertEqual(health["default_model"], "model2")
+        self.assertTrue(health["models"]["model2"]["ready"])
+        self.assertTrue(health["models"]["model3"]["ready"])
 
-    def test_uploaded_csv_uses_model3_contract(self):
+    def test_uploaded_csv_uses_model2_by_default_and_allows_model3(self):
         frame = pd.read_csv(main.PROJECT_DIR / "tests" / "test.csv")
         engine = frame[frame.engine_id.eq("test_0049")]
-        upload = InMemoryUpload(
-            "engine.csv", engine.to_csv(index=False).encode()
-        )
+        content = engine.to_csv(index=False).encode()
 
         with patch.object(main, "run_in_threadpool", run_immediately):
-            response = asyncio.run(main.run_prediction(upload))
+            default_response = asyncio.run(
+                main.run_prediction(InMemoryUpload("engine.csv", content))
+            )
+            model3_response = asyncio.run(
+                main.run_prediction(
+                    InMemoryUpload("engine.csv", content), model_name="model3"
+                )
+            )
 
-        self.assertEqual(response["input_rows"], len(engine))
-        self.assertEqual(len(response["results"]), len(engine))
-        self.assertEqual(response["model_votes"], 51)
-        self.assertTrue(response["reference_profiles"])
+        self.assertEqual(default_response["selected_model"], "model2")
+        self.assertEqual(model3_response["selected_model"], "model3")
+        self.assertEqual(default_response["input_rows"], len(engine))
+        self.assertEqual(len(model3_response["results"]), len(engine))
+        self.assertEqual(model3_response["model_votes"], 51)
+        self.assertTrue(default_response["reference_profiles"])
 
 
 if __name__ == "__main__":

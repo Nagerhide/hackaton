@@ -14,13 +14,31 @@
             <span class="top-bar-mark">PH2</span>
             <span>Biblioteka diagnostyczna</span>
         </a>
-        <button type="button" id="themeToggle" class="theme-toggle" aria-pressed="false">
-            <span class="theme-toggle-icon" aria-hidden="true">☾</span>
-            <span id="themeToggleLabel">Tryb ciemny</span>
-        </button>
+        <nav class="app-tabs" aria-label="Główne sekcje">
+            <button type="button" id="diagnosticsTab" class="app-tab active" aria-selected="true">Diagnostyka</button>
+            <button type="button" id="todoTab" class="app-tab" aria-selected="false">
+                To-do <span id="todoBadge" class="todo-badge" hidden>0</span>
+            </button>
+        </nav>
+        <div class="top-bar-actions">
+            <div id="guestActions" class="auth-actions">
+                <button type="button" id="loginButton" class="top-action-button">Zaloguj</button>
+                <button type="button" id="registerButton" class="top-action-button primary">Załóż konto</button>
+            </div>
+            <div id="userActions" class="auth-actions" hidden>
+                <span id="currentUserLabel" class="current-user"></span>
+                <button type="button" id="addEmployeeButton" class="top-action-button" hidden>+ Pracownik</button>
+                <button type="button" id="logoutButton" class="top-action-button">Wyloguj</button>
+            </div>
+            <button type="button" id="themeToggle" class="theme-toggle" aria-pressed="false">
+                <span class="theme-toggle-icon" aria-hidden="true">☾</span>
+                <span id="themeToggleLabel">Tryb ciemny</span>
+            </button>
+        </div>
     </header>
     <canvas id="interactiveWallpaper" aria-hidden="true"></canvas>
     <main class="card">
+        <section id="diagnosticsView" class="app-view active" aria-labelledby="diagnosticsTab">
         <header class="brand-header">
             <div class="brand-logo-frame">
                 <img class="brand-logo" src="../images/logo.png" alt="PIHER2">
@@ -33,6 +51,13 @@
         </header>
 
         <div class="upload-box">
+            <label class="model-choice" for="modelSelect">
+                <span>Model diagnostyczny</span>
+                <select id="modelSelect">
+                    <option value="model2" selected>Model 2 · domyślny</option>
+                    <option value="model3">Model 3 · odporny na braki</option>
+                </select>
+            </label>
             <input
                 type="file"
                 id="file"
@@ -127,7 +152,126 @@
                 <div id="faultLegend" aria-live="polite"></div>
             </div>
         </section>
+        </section>
+
+        <section id="todoView" class="app-view" aria-labelledby="todoTitle" hidden>
+            <header class="todo-header">
+                <div>
+                    <p class="panel-kicker">PLAN SERWISOWY</p>
+                    <h1 id="todoTitle">Lista to-do cylindrów</h1>
+                    <p id="todoSubtitle">Zaloguj się, aby zapisywać zadania serwisowe.</p>
+                </div>
+                <button type="button" id="refreshTodosButton" class="secondary-button">Odśwież</button>
+            </header>
+            <section id="todoGuestPanel" class="todo-guest-panel">
+                <strong>Lista jest dostępna po zalogowaniu</strong>
+                <p>Diagnostyka pozostaje dostępna bez konta. Konto pozwala zapisywać cylindry i współdzielić zadania.</p>
+                <button type="button" id="todoLoginButton" class="primary-button">Zaloguj się</button>
+            </section>
+            <div id="todoWorkspace" hidden>
+                <div class="todo-toolbar">
+                    <label id="employeeFilterLabel" hidden>
+                        <span>Pracownik</span>
+                        <select id="employeeFilter"></select>
+                    </label>
+                    <div class="todo-status-filter" role="group" aria-label="Filtr statusu">
+                        <button type="button" class="active" data-todo-filter="all">Wszystkie</button>
+                        <button type="button" data-todo-filter="todo">Do zrobienia</button>
+                        <button type="button" data-todo-filter="in_progress">W trakcie</button>
+                        <button type="button" data-todo-filter="done">Skończone</button>
+                    </div>
+                </div>
+                <div id="employeeSummary" class="employee-summary" hidden></div>
+                <div id="todoBoard" class="todo-board" aria-live="polite"></div>
+                <p id="todoEmpty" class="todo-empty" hidden>Brak zadań dla wybranego filtra.</p>
+            </div>
+        </section>
     </main>
+
+    <dialog id="authDialog" class="app-dialog">
+        <form id="authForm">
+            <div class="dialog-header">
+                <div>
+                    <p class="panel-kicker">KONTO</p>
+                    <h2 id="authDialogTitle">Logowanie</h2>
+                </div>
+                <button type="button" class="dialog-close" data-close-dialog="authDialog" aria-label="Zamknij">×</button>
+            </div>
+            <div class="auth-mode-tabs">
+                <button type="button" id="authLoginMode" class="active">Logowanie</button>
+                <button type="button" id="authRegisterMode">Nowe konto</button>
+            </div>
+            <label id="authDisplayNameField" hidden>
+                <span>Imię i nazwisko</span>
+                <input id="authDisplayName" maxlength="80" autocomplete="name">
+            </label>
+            <label>
+                <span>Login</span>
+                <input id="authUsername" minlength="3" maxlength="50" required autocomplete="username">
+            </label>
+            <label>
+                <span>Hasło</span>
+                <input id="authPassword" type="password" minlength="8" maxlength="256" required autocomplete="current-password">
+            </label>
+            <p id="authMessage" class="form-message" aria-live="polite"></p>
+            <button type="submit" id="authSubmit" class="primary-button">Zaloguj się</button>
+        </form>
+    </dialog>
+
+    <dialog id="employeeDialog" class="app-dialog">
+        <form id="employeeForm">
+            <div class="dialog-header">
+                <div>
+                    <p class="panel-kicker">ZESPÓŁ</p>
+                    <h2>Dodaj pracownika</h2>
+                </div>
+                <button type="button" class="dialog-close" data-close-dialog="employeeDialog" aria-label="Zamknij">×</button>
+            </div>
+            <p class="dialog-help">Utworzysz konto i przekażesz pracownikowi login oraz hasło.</p>
+            <label><span>Imię i nazwisko</span><input id="employeeDisplayName" maxlength="80" required></label>
+            <label><span>Login</span><input id="employeeUsername" minlength="3" maxlength="50" required autocomplete="off"></label>
+            <label><span>Hasło startowe</span><input id="employeePassword" type="password" minlength="8" maxlength="256" required autocomplete="new-password"></label>
+            <p id="employeeMessage" class="form-message" aria-live="polite"></p>
+            <button type="submit" class="primary-button">Utwórz konto pracownika</button>
+        </form>
+    </dialog>
+
+    <dialog id="todoEditorDialog" class="app-dialog todo-editor-dialog">
+        <form id="todoEditorForm">
+            <input id="todoEditorId" type="hidden">
+            <div class="dialog-header">
+                <div>
+                    <p class="panel-kicker">ZADANIE SERWISOWE</p>
+                    <h2 id="todoEditorTitle">Dodaj do to-do</h2>
+                </div>
+                <button type="button" class="dialog-close" data-close-dialog="todoEditorDialog" aria-label="Zamknij">×</button>
+            </div>
+            <div class="todo-editor-context">
+                <strong id="todoEditorEngine"></strong>
+                <span id="todoEditorCylinder"></span>
+            </div>
+            <label id="todoOwnerField" hidden><span>Przypisz do</span><select id="todoOwner"></select></label>
+            <label><span>Co jest uszkodzone</span><input id="todoFault" maxlength="100" required></label>
+            <label><span>Powaga</span>
+                <select id="todoSeverity">
+                    <option value="nie_dotyczy">Nie określono</option>
+                    <option value="male">Mała</option>
+                    <option value="srednie">Średnia</option>
+                    <option value="duze">Duża</option>
+                </select>
+            </label>
+            <label><span>Stan</span>
+                <select id="todoStatus">
+                    <option value="todo">Do zrobienia</option>
+                    <option value="in_progress">W trakcie</option>
+                    <option value="done">Skończone</option>
+                </select>
+            </label>
+            <label><span>Notatka / sposób naprawy</span><textarea id="todoNote" maxlength="1000" rows="4"></textarea></label>
+            <p id="todoEditorMessage" class="form-message" aria-live="polite"></p>
+            <button type="submit" class="primary-button">Zapisz zadanie</button>
+        </form>
+    </dialog>
 
     <script src="script.js"></script>
 

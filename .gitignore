@@ -1,3 +1,6 @@
 __pycache__/
 *.py[cod]
 .venv/
+WebApp/backend/*.sqlite3
+WebApp/backend/*.sqlite3-shm
+WebApp/backend/*.sqlite3-wal

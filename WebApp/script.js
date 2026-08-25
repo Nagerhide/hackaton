@@ -9,6 +9,13 @@ let resultUrl;
 let referenceSpectra = {};
 let referenceProfiles = [];
 let referenceSpectraSource = "valid.csv";
+let authToken = null;
+let currentUser = null;
+let employees = [];
+let todoItems = [];
+let todoFilter = "all";
+let todoEditorContext = null;
+let activeModelName = "model2";
 
 function apiUrl(path) {
     return `${API_BASE_URL}${path}`;
@@ -790,6 +797,7 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                 const title = document.createElement("h3");
                 const detailsHeader = document.createElement("div");
                 const detailsNavigation = document.createElement("nav");
+                const addTodo = document.createElement("button");
                 const previousDetail = document.createElement("button");
                 const nextDetail = document.createElement("button");
                 const prediction = { ...row };
@@ -819,6 +827,12 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                 detailsHeader.className = "cylinder-details-header";
                 detailsNavigation.className = "cylinder-details-navigation";
                 detailsNavigation.setAttribute("aria-label", "Przejdź do sąsiedniego cylindra");
+                addTodo.type = "button";
+                addTodo.className = "add-todo-button";
+                addTodo.textContent = "+";
+                addTodo.title = "Dodaj cylinder do listy to-do";
+                addTodo.setAttribute("aria-label", addTodo.title);
+                addTodo.onclick = () => openTodoEditorForCylinder(row, source);
                 previousDetail.type = "button";
                 previousDetail.textContent = "←";
                 previousDetail.title = "Poprzedni cylinder";
@@ -831,7 +845,7 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                 nextDetail.setAttribute("aria-label", nextDetail.title);
                 nextDetail.disabled = index === cylinders.length - 1;
                 nextDetail.onclick = () => selectCylinderAt(index + 1);
-                detailsNavigation.append(previousDetail, nextDetail);
+                detailsNavigation.append(addTodo, previousDetail, nextDetail);
                 detailsHeader.append(title, detailsNavigation);
                 details.replaceChildren(detailsHeader);
                 const missingMeasurements = countMissingMeasurements(source);
@@ -909,7 +923,7 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                     if (highlightedIndices.length) {
                         const highlightLegend = document.createElement("span");
                         highlightLegend.className = "graph-legend-highlight";
-                        highlightLegend.textContent = "Podejrzany fragment model3";
+                        highlightLegend.textContent = `Podejrzany fragment ${activeModelName}`;
                         graphLegend.append(highlightLegend);
                     }
                     graph.className = "cylinder-details-graph";
@@ -1300,6 +1314,7 @@ button.addEventListener("click", async function () {
     const healthPanel = document.getElementById("healthPanel");
     const engineRankingPanel = document.getElementById("engineRankingPanel");
     const faultChartPanel = document.getElementById("faultChartPanel");
+    const selectedModel = document.getElementById("modelSelect").value || "model2";
 
     const file = input.files[0];
 
@@ -1332,7 +1347,7 @@ button.addEventListener("click", async function () {
     faultChartPanel.style.display = "none";
 
     try {
-        const response = await fetch(apiUrl("/api/predict"), {
+        const response = await fetch(apiUrl(`/api/predict?model=${encodeURIComponent(selectedModel)}`), {
             method: "POST",
             body: formData
         });
@@ -1341,10 +1356,11 @@ button.addEventListener("click", async function () {
             throw new Error(payload?.detail || `Serwer zwrócił błąd HTTP ${response.status}.`);
         }
         if (!payload || !Array.isArray(payload.results)) {
-            throw new Error("Serwer zwrócił nieprawidłowy format odpowiedzi model3.");
+            throw new Error("Serwer zwrócił nieprawidłowy format odpowiedzi modelu.");
         }
 
         referenceSpectra = payload.reference_spectra || {};
+        activeModelName = payload.selected_model || selectedModel;
         referenceProfiles = Array.isArray(payload.reference_profiles)
             ? payload.reference_profiles
             : [];
@@ -1370,7 +1386,7 @@ button.addEventListener("click", async function () {
         resultUrl = url;
 
         download.href = url;
-        download.download = "wynik_model3.csv";
+        download.download = `wynik_${payload.selected_model || selectedModel}.csv`;
         download.textContent = isValidationFile
             ? "Pobierz wynik CSV"
             : "Pobierz predykcję CSV";
@@ -1388,11 +1404,520 @@ button.addEventListener("click", async function () {
         const voteInfo = payload.model_votes
             ? ` Głosowało ${payload.model_votes} modeli.`
             : "";
+        const modelLabel = payload.selected_model || selectedModel;
         status.textContent = isValidationFile
-            ? `Analiza model3 zakończona.${voteInfo}`
-            : `Predykcja model3 zakończona.${voteInfo}`;
+            ? `Analiza ${modelLabel} zakończona.${voteInfo}`
+            : `Predykcja ${modelLabel} zakończona.${voteInfo}`;
     } catch (error) {
         console.error("ERROR:", error);
         status.textContent = "Błąd: " + error.message;
     }
 });
+
+function storedAuthToken() {
+    try {
+        return localStorage.getItem("piher2-auth-token");
+    } catch {
+        return null;
+    }
+}
+
+function saveAuthToken(token) {
+    authToken = token || null;
+    try {
+        if (authToken) localStorage.setItem("piher2-auth-token", authToken);
+        else localStorage.removeItem("piher2-auth-token");
+    } catch {
+        // Sesja nadal działa w bieżącej karcie.
+    }
+}
+
+async function apiRequest(path, options = {}) {
+    const headers = new Headers(options.headers || {});
+    if (authToken) headers.set("Authorization", `Bearer ${authToken}`);
+    let body = options.body;
+    if (body && !(body instanceof FormData) && typeof body !== "string") {
+        headers.set("Content-Type", "application/json");
+        body = JSON.stringify(body);
+    }
+    const response = await fetch(apiUrl(path), { ...options, headers, body });
+    const payload = response.status === 204
+        ? null
+        : await response.json().catch(() => null);
+    if (!response.ok) {
+        if (response.status === 401 && !path.startsWith("/api/auth/login")) {
+            clearSession(false);
+        }
+        throw new Error(payload?.detail || `Serwer zwrócił błąd HTTP ${response.status}.`);
+    }
+    return payload;
+}
+
+function openDialog(dialog) {
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+}
+
+function closeDialog(dialog) {
+    if (typeof dialog.close === "function") dialog.close();
+    else dialog.removeAttribute("open");
+}
+
+function setFormMessage(element, text = "", kind = "") {
+    element.textContent = text;
+    element.className = `form-message${kind ? ` ${kind}` : ""}`;
+}
+
+function clearSession(refresh = true) {
+    saveAuthToken(null);
+    currentUser = null;
+    employees = [];
+    todoItems = [];
+    updateAccountInterface();
+    if (refresh) renderTodos();
+}
+
+function updateAccountInterface() {
+    const loggedIn = Boolean(currentUser);
+    document.getElementById("guestActions").hidden = loggedIn;
+    document.getElementById("userActions").hidden = !loggedIn;
+    document.getElementById("todoGuestPanel").hidden = loggedIn;
+    document.getElementById("todoWorkspace").hidden = !loggedIn;
+    document.getElementById("addEmployeeButton").hidden = !loggedIn || currentUser.role !== "manager";
+    document.getElementById("currentUserLabel").textContent = loggedIn
+        ? `${currentUser.display_name} · ${currentUser.role === "manager" ? "przełożony" : "pracownik"}`
+        : "";
+    document.getElementById("todoSubtitle").textContent = loggedIn
+        ? (currentUser.role === "manager"
+            ? "Zadania Twoje i pracowników, wraz z historią wykonania."
+            : "Twoje zadania serwisowe i zakończone naprawy.")
+        : "Zaloguj się, aby zapisywać zadania serwisowe.";
+    updateEmployeeControls();
+    updateTodoBadge();
+}
+
+function setAuthMode(mode) {
+    const registering = mode === "register";
+    document.getElementById("authForm").dataset.mode = registering ? "register" : "login";
+    document.getElementById("authDialogTitle").textContent = registering ? "Załóż konto przełożonego" : "Logowanie";
+    document.getElementById("authDisplayNameField").hidden = !registering;
+    document.getElementById("authDisplayName").required = registering;
+    document.getElementById("authPassword").autocomplete = registering ? "new-password" : "current-password";
+    document.getElementById("authSubmit").textContent = registering ? "Załóż konto" : "Zaloguj się";
+    document.getElementById("authLoginMode").classList.toggle("active", !registering);
+    document.getElementById("authRegisterMode").classList.toggle("active", registering);
+    setFormMessage(document.getElementById("authMessage"));
+}
+
+function showAuth(mode = "login") {
+    setAuthMode(mode);
+    openDialog(document.getElementById("authDialog"));
+    requestAnimationFrame(() => document.getElementById("authUsername").focus());
+}
+
+async function loadEmployees() {
+    if (!currentUser || currentUser.role !== "manager") {
+        employees = [];
+        updateEmployeeControls();
+        return;
+    }
+    const payload = await apiRequest("/api/employees");
+    employees = payload.employees || [];
+    updateEmployeeControls();
+}
+
+function accountOptions(includeAll = false) {
+    const options = [];
+    if (includeAll) options.push({ id: "all", label: "Wszyscy pracownicy i ja" });
+    if (currentUser) options.push({ id: String(currentUser.id), label: `${currentUser.display_name} (ja)` });
+    employees.forEach(employee => options.push({
+        id: String(employee.id),
+        label: employee.display_name || employee.username
+    }));
+    return options;
+}
+
+function fillSelect(select, options, selectedValue = null) {
+    const previous = selectedValue == null ? select.value : String(selectedValue);
+    select.replaceChildren(...options.map(item => {
+        const option = document.createElement("option");
+        option.value = item.id;
+        option.textContent = item.label;
+        return option;
+    }));
+    if (options.some(item => item.id === previous)) select.value = previous;
+}
+
+function updateEmployeeControls() {
+    const manager = currentUser?.role === "manager";
+    const filterLabel = document.getElementById("employeeFilterLabel");
+    const ownerField = document.getElementById("todoOwnerField");
+    filterLabel.hidden = !manager;
+    ownerField.hidden = !manager;
+    if (manager) {
+        fillSelect(document.getElementById("employeeFilter"), accountOptions(true));
+        fillSelect(document.getElementById("todoOwner"), accountOptions(false));
+    }
+}
+
+async function loadTodos() {
+    if (!currentUser) {
+        todoItems = [];
+        renderTodos();
+        return;
+    }
+    const payload = await apiRequest("/api/todos");
+    todoItems = payload.todos || [];
+    renderTodos();
+}
+
+async function loadWorkspaceData() {
+    if (!currentUser) return;
+    await loadEmployees();
+    await loadTodos();
+}
+
+function updateTodoBadge() {
+    const badge = document.getElementById("todoBadge");
+    const count = todoItems.filter(item => item.status !== "done").length;
+    badge.hidden = !currentUser || count === 0;
+    badge.textContent = count;
+}
+
+function todoStatusName(status) {
+    return { todo: "Do zrobienia", in_progress: "W trakcie", done: "Skończone" }[status] || status;
+}
+
+function drawTodoThumbnail(canvas, values, severity) {
+    const context = canvas.getContext("2d");
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    const width = Math.max(76, canvas.clientWidth || 76);
+    const height = 46;
+    canvas.width = width * ratio;
+    canvas.height = height * ratio;
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.clearRect(0, 0, width, height);
+    const numeric = (values || []).map(value => Number(value));
+    const finite = numeric.filter(Number.isFinite);
+    if (finite.length < 2) return;
+    const minimum = Math.min(...finite);
+    const maximum = Math.max(...finite);
+    const span = Math.max(maximum - minimum, 1e-9);
+    const color = { male: "#a16207", srednie: "#d97706", duze: "#dc2626" }[severity] || "#6d28d9";
+    context.beginPath();
+    let started = false;
+    numeric.forEach((value, index) => {
+        if (!Number.isFinite(value)) {
+            started = false;
+            return;
+        }
+        const x = 2 + (index / Math.max(numeric.length - 1, 1)) * (width - 4);
+        const y = height - 3 - ((value - minimum) / span) * (height - 7);
+        if (!started) context.moveTo(x, y);
+        else context.lineTo(x, y);
+        started = true;
+    });
+    context.lineWidth = 2;
+    context.strokeStyle = color;
+    context.stroke();
+}
+
+function filteredTodos() {
+    const owner = document.getElementById("employeeFilter")?.value || "all";
+    return todoItems.filter(item => {
+        const statusMatches = todoFilter === "all" || item.status === todoFilter;
+        const ownerMatches = currentUser?.role !== "manager" || owner === "all" || String(item.owner_id) === owner;
+        return statusMatches && ownerMatches;
+    });
+}
+
+function renderEmployeeSummary(items) {
+    const summary = document.getElementById("employeeSummary");
+    if (currentUser?.role !== "manager") {
+        summary.hidden = true;
+        return;
+    }
+    const owner = document.getElementById("employeeFilter").value;
+    const selected = accountOptions(false).find(option => option.id === owner);
+    const allForOwner = owner === "all" ? todoItems : todoItems.filter(item => String(item.owner_id) === owner);
+    const finished = allForOwner.filter(item => item.status === "done").length;
+    summary.hidden = false;
+    summary.textContent = `${selected?.label || "Cały zespół"}: ${allForOwner.length} zadań, ${finished} zakończonych, ${allForOwner.length - finished} aktywnych.`;
+}
+
+function createTodoCard(item) {
+    const card = document.createElement("article");
+    const thumbnail = document.createElement("div");
+    const thumbnailTitle = document.createElement("strong");
+    const canvas = document.createElement("canvas");
+    const content = document.createElement("div");
+    const owner = document.createElement("p");
+    const title = document.createElement("h3");
+    const meta = document.createElement("p");
+    const note = document.createElement("p");
+    const actions = document.createElement("div");
+    const status = document.createElement("select");
+    const edit = document.createElement("button");
+    const remove = document.createElement("button");
+
+    card.className = "todo-card";
+    card.dataset.status = item.status;
+    thumbnail.className = `todo-thumbnail ${item.severity}`;
+    thumbnailTitle.textContent = `Cylinder ${item.cylinder}`;
+    canvas.setAttribute("aria-label", `Miniatura widma cylindra ${item.cylinder}`);
+    thumbnail.append(thumbnailTitle, canvas);
+    content.className = "todo-content";
+    owner.className = "todo-owner";
+    owner.textContent = currentUser?.role === "manager"
+        ? `Pracownik: ${item.owner_display_name}`
+        : `Zadanie: ${item.owner_display_name}`;
+    title.textContent = item.fault_label;
+    meta.className = "todo-meta";
+    meta.textContent = `Silnik ${item.engine_id} · cylinder ${item.cylinder} · ${severityNames[item.severity] || "bez powagi"}`;
+    note.className = "todo-note";
+    note.textContent = item.note || (item.completed_at
+        ? `Zakończono: ${new Date(item.completed_at).toLocaleString("pl-PL")}`
+        : "Brak dodatkowej notatki.");
+    actions.className = "todo-card-actions";
+    ["todo", "in_progress", "done"].forEach(value => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = todoStatusName(value);
+        status.append(option);
+    });
+    status.value = item.status;
+    status.title = "Zmień stan zadania";
+    status.addEventListener("change", async () => {
+        try {
+            await apiRequest(`/api/todos/${item.id}`, { method: "PATCH", body: { status: status.value } });
+            await loadTodos();
+        } catch (error) {
+            status.value = item.status;
+            window.alert(error.message);
+        }
+    });
+    edit.type = "button";
+    edit.textContent = "Edytuj";
+    edit.onclick = () => openTodoEditorForItem(item);
+    remove.type = "button";
+    remove.className = "danger";
+    remove.textContent = "Usuń";
+    remove.onclick = async () => {
+        if (!window.confirm(`Usunąć zadanie dla ${item.engine_id}, cylinder ${item.cylinder}?`)) return;
+        try {
+            await apiRequest(`/api/todos/${item.id}`, { method: "DELETE" });
+            await loadTodos();
+        } catch (error) {
+            window.alert(error.message);
+        }
+    };
+    actions.append(status, edit, remove);
+    content.append(owner, title, meta, note, actions);
+    card.append(thumbnail, content);
+    requestAnimationFrame(() => drawTodoThumbnail(canvas, item.spectrum, item.severity));
+    return card;
+}
+
+function renderTodos() {
+    const board = document.getElementById("todoBoard");
+    const empty = document.getElementById("todoEmpty");
+    if (!currentUser) {
+        board.replaceChildren();
+        empty.hidden = true;
+        updateTodoBadge();
+        return;
+    }
+    const items = filteredTodos();
+    board.replaceChildren(...items.map(createTodoCard));
+    empty.hidden = items.length > 0;
+    renderEmployeeSummary(items);
+    updateTodoBadge();
+}
+
+function cylinderSpectrum(source) {
+    return Array.from({ length: 21 }, (_, index) => {
+        const value = Number(source?.[`mV_${index}`]);
+        return Number.isFinite(value) ? value : null;
+    });
+}
+
+function populateTodoEditor(context) {
+    const editing = Boolean(context.id);
+    document.getElementById("todoEditorId").value = context.id || "";
+    document.getElementById("todoEditorTitle").textContent = editing ? "Edytuj zadanie" : "Dodaj do to-do";
+    document.getElementById("todoEditorEngine").textContent = `Silnik ${context.engine_id}`;
+    document.getElementById("todoEditorCylinder").textContent = `Cylinder ${context.cylinder}`;
+    document.getElementById("todoFault").value = context.fault_label || "kontrola cylindra";
+    document.getElementById("todoSeverity").value = context.severity || "nie_dotyczy";
+    document.getElementById("todoStatus").value = context.status || "todo";
+    document.getElementById("todoNote").value = context.note || "";
+    if (currentUser?.role === "manager") {
+        fillSelect(document.getElementById("todoOwner"), accountOptions(false), context.owner_id || currentUser.id);
+    }
+    setFormMessage(document.getElementById("todoEditorMessage"));
+}
+
+function showTodoEditor(context) {
+    todoEditorContext = context;
+    populateTodoEditor(context);
+    openDialog(document.getElementById("todoEditorDialog"));
+}
+
+function openTodoEditorForCylinder(row, source) {
+    const context = {
+        engine_id: row.engine_id,
+        cylinder: Number(row.cylinder),
+        n_cylinders: Number(source?.n_cylinders) || null,
+        fault_label: row.label === "ok" ? "kontrola cylindra" : (labelNames[row.label] || row.label),
+        severity: row.label === "ok" ? "nie_dotyczy" : row.severity,
+        status: "todo",
+        note: "",
+        spectrum: cylinderSpectrum(source),
+        owner_id: currentUser?.id || null
+    };
+    todoEditorContext = context;
+    if (!currentUser) {
+        showAuth("login");
+        setFormMessage(document.getElementById("authMessage"), "Zaloguj się, aby zapisać ten cylinder.");
+        return;
+    }
+    showTodoEditor(context);
+}
+
+function openTodoEditorForItem(item) {
+    showTodoEditor({ ...item });
+}
+
+function switchAppView(name) {
+    const todo = name === "todo";
+    document.getElementById("diagnosticsView").hidden = todo;
+    document.getElementById("todoView").hidden = !todo;
+    document.getElementById("diagnosticsTab").classList.toggle("active", !todo);
+    document.getElementById("todoTab").classList.toggle("active", todo);
+    document.getElementById("diagnosticsTab").setAttribute("aria-selected", String(!todo));
+    document.getElementById("todoTab").setAttribute("aria-selected", String(todo));
+    if (todo && currentUser) loadWorkspaceData().catch(error => window.alert(error.message));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function restoreSession() {
+    saveAuthToken(storedAuthToken());
+    if (!authToken) {
+        updateAccountInterface();
+        return;
+    }
+    try {
+        const payload = await apiRequest("/api/auth/me");
+        currentUser = payload.user;
+        updateAccountInterface();
+        await loadWorkspaceData();
+    } catch {
+        clearSession();
+    }
+}
+
+function initializeAccountsAndTodos() {
+    document.getElementById("diagnosticsTab").onclick = () => switchAppView("diagnostics");
+    document.getElementById("todoTab").onclick = () => switchAppView("todo");
+    document.getElementById("loginButton").onclick = () => showAuth("login");
+    document.getElementById("registerButton").onclick = () => showAuth("register");
+    document.getElementById("todoLoginButton").onclick = () => showAuth("login");
+    document.getElementById("authLoginMode").onclick = () => setAuthMode("login");
+    document.getElementById("authRegisterMode").onclick = () => setAuthMode("register");
+    document.querySelectorAll("[data-close-dialog]").forEach(control => {
+        control.addEventListener("click", () => closeDialog(document.getElementById(control.dataset.closeDialog)));
+    });
+    document.getElementById("logoutButton").onclick = async () => {
+        try { await apiRequest("/api/auth/logout", { method: "POST" }); } catch { /* sesja i tak jest usuwana */ }
+        clearSession();
+        switchAppView("diagnostics");
+    };
+    document.getElementById("authForm").addEventListener("submit", async event => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const mode = form.dataset.mode || "login";
+        const message = document.getElementById("authMessage");
+        setFormMessage(message, "Zapisywanie...");
+        try {
+            const body = {
+                username: document.getElementById("authUsername").value,
+                password: document.getElementById("authPassword").value
+            };
+            if (mode === "register") body.display_name = document.getElementById("authDisplayName").value;
+            const payload = await apiRequest(`/api/auth/${mode}`, { method: "POST", body });
+            saveAuthToken(payload.token);
+            currentUser = payload.user;
+            updateAccountInterface();
+            await loadWorkspaceData();
+            closeDialog(document.getElementById("authDialog"));
+            form.reset();
+            if (todoEditorContext && !todoEditorContext.id) showTodoEditor({ ...todoEditorContext, owner_id: currentUser.id });
+        } catch (error) {
+            setFormMessage(message, error.message, "error");
+        }
+    });
+    document.getElementById("addEmployeeButton").onclick = () => {
+        document.getElementById("employeeForm").reset();
+        setFormMessage(document.getElementById("employeeMessage"));
+        openDialog(document.getElementById("employeeDialog"));
+    };
+    document.getElementById("employeeForm").addEventListener("submit", async event => {
+        event.preventDefault();
+        const message = document.getElementById("employeeMessage");
+        try {
+            await apiRequest("/api/employees", {
+                method: "POST",
+                body: {
+                    display_name: document.getElementById("employeeDisplayName").value,
+                    username: document.getElementById("employeeUsername").value,
+                    password: document.getElementById("employeePassword").value
+                }
+            });
+            setFormMessage(message, "Konto pracownika zostało utworzone.", "success");
+            await loadWorkspaceData();
+            setTimeout(() => closeDialog(document.getElementById("employeeDialog")), 700);
+        } catch (error) {
+            setFormMessage(message, error.message, "error");
+        }
+    });
+    document.getElementById("todoEditorForm").addEventListener("submit", async event => {
+        event.preventDefault();
+        const message = document.getElementById("todoEditorMessage");
+        const id = Number(document.getElementById("todoEditorId").value) || null;
+        const editable = {
+            fault_label: document.getElementById("todoFault").value,
+            severity: document.getElementById("todoSeverity").value,
+            status: document.getElementById("todoStatus").value,
+            note: document.getElementById("todoNote").value
+        };
+        if (currentUser.role === "manager") editable.owner_id = Number(document.getElementById("todoOwner").value);
+        try {
+            if (id) {
+                await apiRequest(`/api/todos/${id}`, { method: "PATCH", body: editable });
+            } else {
+                await apiRequest("/api/todos", {
+                    method: "POST",
+                    body: { ...todoEditorContext, ...editable, owner_id: editable.owner_id || currentUser.id }
+                });
+            }
+            todoEditorContext = null;
+            closeDialog(document.getElementById("todoEditorDialog"));
+            await loadTodos();
+            switchAppView("todo");
+        } catch (error) {
+            setFormMessage(message, error.message, "error");
+        }
+    });
+    document.getElementById("employeeFilter").onchange = renderTodos;
+    document.querySelectorAll("[data-todo-filter]").forEach(control => {
+        control.onclick = () => {
+            todoFilter = control.dataset.todoFilter;
+            document.querySelectorAll("[data-todo-filter]").forEach(button => button.classList.toggle("active", button === control));
+            renderTodos();
+        };
+    });
+    document.getElementById("refreshTodosButton").onclick = () => loadWorkspaceData().catch(error => window.alert(error.message));
+    restoreSession();
+}
+
+initializeAccountsAndTodos();

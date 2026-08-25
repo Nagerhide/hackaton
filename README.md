@@ -1,8 +1,9 @@
 # PIHER2 — diagnostyka akustyczna silnika
 
-WebApp jest podłączony bezpośrednio do publicznej funkcji `predict` z
-`model/model3.py`. Ten sam proces FastAPI serwuje stronę oraz endpointy, więc
-nie trzeba uruchamiać osobnego serwera statycznego.
+WebApp pozwala wybrać model 2 albo model 3 przed uruchomieniem analizy.
+Domyślnie używa stabilnego `model2`, a `model3` pozostaje wariantem odpornym na
+braki danych. Ten sam proces FastAPI serwuje stronę oraz endpointy, więc nie
+trzeba uruchamiać osobnego serwera statycznego.
 
 ## Uruchomienie
 
@@ -17,10 +18,29 @@ Następnie otwórz <http://127.0.0.1:8000>. Dokumentacja API jest dostępna pod
 <http://127.0.0.1:8000/docs>, a kontrola gotowości pod
 <http://127.0.0.1:8000/api/health>.
 
-Backend automatycznie korzysta z artefaktów:
+Backend automatycznie wykrywa artefakty obu modeli:
 
-- `model/acoustic_model3.pkl` — ensemble klasyfikatorów i rekonstruktory;
-- `model/verdict_explainer3.pkl` — osobny model wyjaśniający werdykt.
+- `model/acoustic_model2.pkl` i `model/verdict_explainer.pkl` — domyślny model 2;
+- `model/acoustic_model3.pkl` i `model/verdict_explainer3.pkl` — model 3 z
+  rekonstruktorami brakujących odczytów.
+
+## Konta i lista serwisowa
+
+Diagnostyka oraz wybór modelu działają bez logowania. Rejestracja tworzy konto
+przełożonego, który może następnie zakładać konta pracowników i przekazać im
+login z hasłem startowym. Przełożony widzi swoje zadania oraz zadania wyłącznie
+swoich pracowników; pracownik widzi i zmienia tylko własną listę.
+
+W szczegółach cylindra przycisk `+` tworzy zadanie zawierające miniaturę widma,
+numer silnika, numer cylindra, rozpoznaną usterkę i powagę. W osobnej zakładce
+To-do można poprawić opis usterki, dopisać sposób naprawy, przypisać pracownika
+oraz ustawić stan `Do zrobienia`, `W trakcie` albo `Skończone`. Zakończone
+zadania pozostają w historii i można je filtrować.
+
+Konta, sesje i zadania są trwale zapisywane w lokalnej bazie SQLite
+`WebApp/backend/piher2.sqlite3`, tworzonej przy pierwszym uruchomieniu. Inną
+ścieżkę można wskazać zmienną `PIHER2_DATABASE_PATH`. Hasła są przechowywane
+jako PBKDF2-SHA256 z indywidualną solą, a nie w postaci jawnej.
 
 ## Eksperymentalny model3
 
@@ -28,8 +48,8 @@ Odporna na braki architektura znajduje się w `model/model3.py`. Łączy
 rekonstrukcje KNN i Ridge z klasyfikatorem pomijającym brakujące pasma oraz
 wielokrotnym Group-CV ensemble. Zachowuje API zgodne z `model2`. W niezależnych
 testach 220 masek (10% braków, maks. 3 w wierszu i 2 kolejne) najgorszy wynik
-wyniósł `35.255` punktu. Jest to obecnie model używany przez WebApp i endpoint
-`/api/predict`.
+wyniósł `35.255` punktu. Można go wybrać w WebApp lub przez parametr endpointu
+`/api/predict?model=model3`; bez parametru używany jest `model2`.
 
 ```bash
 .venv/bin/python model/model3.py
@@ -99,8 +119,9 @@ startu procesu — nie przelicza zbioru walidacyjnego przy predykcji.
 
 ## API
 
-`POST /api/predict` przyjmuje `multipart/form-data` z polem `file`. Odpowiedź ma
-postać JSON:
+`POST /api/predict?model=model2` przyjmuje `multipart/form-data` z polem `file`.
+Parametr `model` może mieć wartość `model2` (domyślna) albo `model3`. Odpowiedź
+ma postać JSON:
 
 ```json
 {
@@ -119,6 +140,7 @@ postać JSON:
       "explanation": "Podejrzenie unknown: najbardziej nietypowe jest pasmo 1–4 kHz..."
     }
   ],
+  "selected_model": "model2",
   "model_votes": 51,
   "input_rows": 12
 }
@@ -126,3 +148,10 @@ postać JSON:
 
 Opcjonalne `?include_bands=true` dodaje szczegółową tabelę wyników dla każdego
 pasma. Historyczne adresy `/predict` oraz `/extract-csv` pozostają aliasami.
+
+Endpointy kont i zadań używają nagłówka `Authorization: Bearer <token>`:
+
+- `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`;
+- `GET /api/auth/me`;
+- `GET/POST /api/employees` dla przełożonego;
+- `GET/POST /api/todos` oraz `PATCH/DELETE /api/todos/{id}`.
