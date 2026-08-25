@@ -1,10 +1,13 @@
-console.log("NOWY JS");
-
 const button = document.getElementById("uploadButton");
 const previewButton = document.getElementById("previewButton");
 const closePreviewButton = document.getElementById("closePreviewButton");
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const API_BASE_URL = window.location.protocol === "file:" ? "http://127.0.0.1:8000" : "";
 let resultUrl;
+
+function apiUrl(path) {
+    return `${API_BASE_URL}${path}`;
+}
 
 function createInteractiveWallpaper() {
     const canvas = document.getElementById("interactiveWallpaper");
@@ -173,6 +176,26 @@ function parseCsv(text) {
     return values.map(row => Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ""])));
 }
 
+function rowsToCsv(rows) {
+    if (!rows.length) return "";
+    const headers = [...new Set(rows.flatMap(row => Object.keys(row)))];
+    const escapeField = value => {
+        const text = value == null ? "" : String(value);
+        return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+    };
+    return [
+        headers.map(escapeField).join(","),
+        ...rows.map(row => headers.map(header => escapeField(row[header])).join(","))
+    ].join("\n");
+}
+
+function suspiciousMeasurementIndices(value) {
+    return String(value || "")
+        .split(",")
+        .map(column => Number(column.trim().replace(/^mV_/, "")))
+        .filter(index => Number.isInteger(index) && index >= 0 && index <= 20);
+}
+
 function countMissingMeasurements(source) {
     if (!source) return 0;
     return Array.from({ length: 21 }, (_, index) => Number(source[`mV_${index}`]))
@@ -190,7 +213,7 @@ async function readSourceCsv(file) {
 
     const formData = new FormData();
     formData.append("file", file);
-    const response = await fetch("http://127.0.0.1:8000/extract-csv", {
+    const response = await fetch(apiUrl("/api/extract-csv"), {
         method: "POST",
         body: formData
     });
@@ -205,7 +228,8 @@ function drawCylinderGraph(canvas, source, state, {
     width = 220,
     height = 48,
     showScale = false,
-    averageValues = null
+    averageValues = null,
+    highlightedIndices = []
 } = {}) {
     const values = Array.from({ length: 21 }, (_, index) => Number(source[`mV_${index}`]));
     const plottedValues = [
@@ -265,6 +289,22 @@ function drawCylinderGraph(canvas, source, state, {
         context.textAlign = "left";
         context.textBaseline = "alphabetic";
         context.fillText("mV", padding.left, 9);
+    }
+
+    if (highlightedIndices.length) {
+        const firstIndex = Math.min(...highlightedIndices);
+        const lastIndex = Math.max(...highlightedIndices);
+        const pointWidth = plotWidth / (values.length - 1);
+        const startX = Math.max(padding.left, padding.left + firstIndex * pointWidth - pointWidth / 2);
+        const endX = Math.min(
+            width - padding.right,
+            padding.left + lastIndex * pointWidth + pointWidth / 2
+        );
+        context.fillStyle = "rgba(239, 68, 68, 0.12)";
+        context.fillRect(startX, padding.top, endX - startX, plotHeight);
+        context.strokeStyle = "rgba(220, 38, 38, 0.48)";
+        context.lineWidth = 1;
+        context.strokeRect(startX, padding.top, endX - startX, plotHeight);
     }
 
     const drawLine = () => {
@@ -459,7 +499,7 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
             const state = row.label === "ok" ? "ok" : (row.label === "unknown" ? "unknown" : row.severity);
             const number = document.createElement("span");
             const label = document.createElement("span");
-            const confidence = Number(row.confidence);
+            const confidence = Number(row.vote_confidence ?? row.confidence);
             const statusText = cylinderStatusText(row);
             button.type = "button";
             button.className = `cylinder ${state}`;
@@ -519,14 +559,26 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                         const item = document.createElement("div");
                         const name = document.createElement("dt");
                         const parameterValue = document.createElement("dd");
-                        const confidence = key === "confidence" ? Number(value) : null;
+                        const confidence = key === "confidence" || key.endsWith("_confidence")
+                            ? Number(value)
+                            : null;
                         const readableNames = {
                             confidence: "Pewność oceny modelu",
+                            vote_confidence: "Zgodność całego werdyktu",
+                            label_vote_confidence: "Zgodność typu usterki",
+                            severity_vote_confidence: "Zgodność nasilenia",
+                            n_model_votes: "Liczba głosujących modeli",
                             label: "Rozpoznany problem",
                             severity: "Nasilenie problemu",
                             engine_id: "Identyfikator silnika",
                             cylinder: "Numer cylindra",
-                            n_cylinders: "Liczba cylindrów"
+                            n_cylinders: "Liczba cylindrów",
+                            suspicious_frequency_range: "Podejrzane pasmo",
+                            suspicious_columns: "Podejrzane pomiary",
+                            peak_anomaly_score: "Maksymalny wynik anomalii",
+                            direction: "Kierunek odchylenia",
+                            template_similarity: "Podobieństwo do wzorca usterki",
+                            explanation: "Wyjaśnienie werdyktu"
                         };
                         name.textContent = readableNames[key] || key.replace("_", " ");
                         parameterValue.textContent = confidence != null && Number.isFinite(confidence)
@@ -544,6 +596,9 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                 const prediction = { ...row };
                 delete prediction.engine_id;
                 delete prediction.cylinder;
+                delete prediction.confidence;
+                delete prediction.uncalibrated_probability_score;
+                delete prediction.band_scores_json;
                 prediction.label = labelNames[row.label] || row.label;
                 prediction.severity = severityNames[row.severity] || row.severity;
 
@@ -562,6 +617,8 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                     "Pewność oceny": Number.isFinite(confidence)
                         ? `${(confidence * 100).toFixed(1)}%`
                         : "Brak danych",
+                    "Podejrzane pasmo": row.suspicious_frequency_range || "brak",
+                    "Wyjaśnienie werdyktu": row.explanation || "Brak dodatkowego wyjaśnienia.",
                     "Brakujące odczyty": `${missingMeasurements} z 21`
                 };
                 const detailsLayout = document.createElement("div");
@@ -590,12 +647,19 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                     const referenceSpectrum = ANOMALY_REFERENCE_SPECTRA[
                         `${cylinderType}:${cylinderSeverity}`
                     ] || REFERENCE_SPECTRA[cylinderType] || null;
+                    const highlightedIndices = suspiciousMeasurementIndices(row.suspicious_columns);
                     graphSection.className = "cylinder-details-section";
                     graphTitle.textContent = "Widmo akustyczne cylindra";
                     graphLegend.className = "graph-legend";
-                    graphLegend.textContent = cylinderType === "ok"
-                        ? "Linia przerywana pokazuje typowy przebieg dla sprawnego cylindra."
-                        : "Linia przerywana pokazuje typowy przebieg dla podobnej usterki.";
+                    const referenceText = referenceSpectrum
+                        ? (cylinderType === "ok"
+                            ? "Linia przerywana pokazuje typowy przebieg dla sprawnego cylindra."
+                            : "Linia przerywana pokazuje typowy przebieg dla podobnej usterki.")
+                        : "";
+                    const highlightText = highlightedIndices.length
+                        ? "Czerwone tło wskazuje podejrzany fragment model2."
+                        : "";
+                    graphLegend.textContent = [referenceText, highlightText].filter(Boolean).join(" ");
                     graph.className = "cylinder-details-graph";
                     graph.setAttribute("role", "img");
                     graph.setAttribute("aria-label", `Wykres widma akustycznego cylindra ${row.cylinder}. Najedź kursorem na wykres, aby odczytać wartość punktu.`);
@@ -605,7 +669,7 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                     graphTooltip.textContent = "Najedź na wykres";
                     graphWrap.append(graph, graphTooltip);
                     graphSection.append(graphTitle);
-                    if (referenceSpectrum) graphSection.append(graphLegend);
+                    if (referenceSpectrum || highlightedIndices.length) graphSection.append(graphLegend);
                     graphSection.append(graphWrap);
                     measurementSection = createParameterSection("Pomiary techniczne", measurementParameters);
                     detailsVisual.append(graphSection);
@@ -615,7 +679,8 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                             width: Math.round(graphBounds.width),
                             height: Math.round(graphBounds.height),
                             showScale: true,
-                            averageValues: referenceSpectrum
+                            averageValues: referenceSpectrum,
+                            highlightedIndices
                         };
                         drawCylinderGraph(graph, source, state, graphOptions);
                         enableGraphReadout(graph, source, state, graphOptions, point => {
@@ -873,8 +938,6 @@ closePreviewButton.addEventListener("click", function () {
 });
 
 button.addEventListener("click", async function () {
-    console.log("CLICK");
-
     const input = document.getElementById("file");
     const status = document.getElementById("status");
     const download = document.getElementById("download");
@@ -903,8 +966,6 @@ button.addEventListener("click", async function () {
         return;
     }
 
-    console.log("INPUT FILE:", file.name);
-
     const formData = new FormData();
     formData.append("file", file);
 
@@ -915,52 +976,34 @@ button.addEventListener("click", async function () {
     faultChartPanel.style.display = "none";
 
     try {
-        const response = await fetch("http://127.0.0.1:8000/predict", {
+        const response = await fetch(apiUrl("/api/predict"), {
             method: "POST",
             body: formData
         });
-
-        console.log("RESPONSE STATUS:", response.status);
-
+        const payload = await response.json().catch(() => null);
         if (!response.ok) {
-            const errorBody = await response.text();
-            try {
-                const error = JSON.parse(errorBody);
-                throw new Error(error.detail || errorBody);
-            } catch (parseError) {
-                if (parseError instanceof SyntaxError) {
-                    throw new Error(errorBody);
-                }
-                throw parseError;
-            }
+            throw new Error(payload?.detail || `Serwer zwrócił błąd HTTP ${response.status}.`);
+        }
+        if (!payload || !Array.isArray(payload.results)) {
+            throw new Error("Serwer zwrócił nieprawidłowy format odpowiedzi model2.");
         }
 
-        const blob = await response.blob();
-        console.log("RECEIVED SIZE:", blob.size);
-        console.log("RECEIVED TYPE:", blob.type);
-
-        const text = await blob.text();
-        const [predictions, sourceText] = await Promise.all([
-            Promise.resolve(parseCsv(text)),
-            readSourceCsv(file)
-        ]);
+        const predictions = payload.results;
+        const sourceText = await readSourceCsv(file);
         const sourceRows = parseCsv(sourceText);
         const isValidationFile = sourceRows.some(row =>
             Object.prototype.hasOwnProperty.call(row, "label")
             && Object.prototype.hasOwnProperty.call(row, "severity")
         );
 
-        console.log("===== SERVER RESPONSE =====");
-        console.log(text.substring(0, 500));
-        console.log("===========================");
-
+        const text = rowsToCsv(predictions);
         const resultBlob = new Blob([text], { type: "text/csv;charset=utf-8" });
         if (resultUrl) URL.revokeObjectURL(resultUrl);
         const url = URL.createObjectURL(resultBlob);
         resultUrl = url;
 
         download.href = url;
-        download.download = "wynik.csv";
+        download.download = "wynik_model2.csv";
         download.textContent = isValidationFile
             ? "⬇ Pobierz wynik"
             : "⬇ Pobierz wynik predykcji";
@@ -970,9 +1013,12 @@ button.addEventListener("click", async function () {
         renderEngineRanking(predictions, sourceRows);
         renderFaultChart(predictions);
 
+        const voteInfo = payload.model_votes
+            ? ` Głosowało ${payload.model_votes} modeli.`
+            : "";
         status.textContent = isValidationFile
-            ? "Analiza danych z tabeli zakończona! Wynik został przygotowany."
-            : "Predykcja zakończona! Wynik został przygotowany.";
+            ? `Analiza model2 zakończona.${voteInfo}`
+            : `Predykcja model2 zakończona.${voteInfo}`;
     } catch (error) {
         console.error("ERROR:", error);
         status.textContent = "Błąd: " + error.message;

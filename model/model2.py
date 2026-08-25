@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 import joblib
@@ -199,19 +200,59 @@ class ProbabilityEnsemble:
         if not self.models:
             raise ValueError("Ensemble nie może być pusty")
 
-    def predict(self, frame: pd.DataFrame):
+    def predict_with_details(self, frame: pd.DataFrame):
         probabilities = [model.predict_probabilities(frame) for model in self.models]
         label_probability = np.mean([item[0] for item in probabilities], axis=0)
         severity_probability = np.mean([item[1] for item in probabilities], axis=0)
-        return decode_probabilities(label_probability, severity_probability)
+        labels, severities, probability_score = decode_probabilities(
+            label_probability, severity_probability
+        )
+
+        individual = [decode_probabilities(*item) for item in probabilities]
+        label_votes = np.vstack([item[0] for item in individual])
+        severity_votes = np.vstack([item[1] for item in individual])
+        label_vote_confidence = (label_votes == labels[None, :]).mean(axis=0)
+        severity_vote_confidence = (severity_votes == severities[None, :]).mean(axis=0)
+        joint_vote_confidence = (
+            (label_votes == labels[None, :])
+            & (severity_votes == severities[None, :])
+        ).mean(axis=0)
+        fault_mask = np.isin(labels, FAULT_LABELS)
+        vote_confidence = np.where(
+            fault_mask, joint_vote_confidence, label_vote_confidence
+        )
+        details = {
+            "vote_confidence": vote_confidence,
+            "label_vote_confidence": label_vote_confidence,
+            "severity_vote_confidence": severity_vote_confidence,
+            "probability_score": probability_score,
+            "n_model_votes": np.full(len(frame), len(self.models), dtype=int),
+        }
+        return labels, severities, details
+
+    def predict(self, frame: pd.DataFrame):
+        labels, severities, details = self.predict_with_details(frame)
+        return labels, severities, details["vote_confidence"]
 
 
 def prediction_frame(model, frame: pd.DataFrame) -> pd.DataFrame:
-    labels, severities, confidence = model.predict(frame)
+    if hasattr(model, "predict_with_details"):
+        labels, severities, details = model.predict_with_details(frame)
+    else:
+        labels, severities, confidence = model.predict(frame)
+        details = {
+            "vote_confidence": confidence,
+            "label_vote_confidence": confidence,
+            "severity_vote_confidence": confidence,
+            "probability_score": confidence,
+            "n_model_votes": np.ones(len(frame), dtype=int),
+        }
     result = frame[["engine_id", "cylinder"]].reset_index(drop=True).copy()
     result["label"] = labels
     result["severity"] = severities
-    result["confidence"] = confidence
+    result["confidence"] = details["vote_confidence"]
+    for name, values in details.items():
+        result[name] = values
     return result
 
 
@@ -469,7 +510,17 @@ class SpectralVerdictExplainer:
                     "cylinder": frame.iloc[row_index].cylinder,
                     "label": label,
                     "severity": severity,
-                    "uncalibrated_model_score": float(predictions.iloc[row_index].confidence),
+                    "vote_confidence": float(predictions.iloc[row_index].vote_confidence),
+                    "label_vote_confidence": float(
+                        predictions.iloc[row_index].label_vote_confidence
+                    ),
+                    "severity_vote_confidence": float(
+                        predictions.iloc[row_index].severity_vote_confidence
+                    ),
+                    "uncalibrated_probability_score": float(
+                        predictions.iloc[row_index].probability_score
+                    ),
+                    "n_model_votes": int(predictions.iloc[row_index].n_model_votes),
                     "suspicious_frequency_range": fragment,
                     "suspicious_columns": suspicious_columns,
                     "peak_anomaly_score": peak_score,
@@ -519,24 +570,102 @@ def load_explainer(path: Path) -> SpectralVerdictExplainer:
     return artifact["model"]
 
 
+@lru_cache(maxsize=8)
+def _load_server_artifacts(classifier_path: str, explainer_path: str):
+    """Wczytuje PKL tylko raz na proces serwera."""
+    return (
+        load_exported_model(Path(classifier_path)),
+        load_explainer(Path(explainer_path)),
+    )
+
+
+def clear_model_cache() -> None:
+    """Czyści cache, np. po podmianie plików modeli podczas działania serwera."""
+    _load_server_artifacts.cache_clear()
+
+
 def predict_and_explain(
     classifier_path: Path, explainer_path: Path, raw_frame: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     prepared = interpolate_raw_spectra(raw_frame)
-    classifier = load_exported_model(classifier_path)
-    explainer = load_explainer(explainer_path)
+    classifier, explainer = _load_server_artifacts(
+        str(classifier_path.resolve()), str(explainer_path.resolve())
+    )
     prediction_with_confidence = prediction_frame(classifier, prepared)
     explanations, bands = explainer.explain(prepared, prediction_with_confidence)
-    predictions = prediction_with_confidence.drop(columns="confidence")
+    predictions = prediction_with_confidence[
+        ["engine_id", "cylinder", "label", "severity"]
+    ].copy()
     return predictions, explanations, bands
 
 
 def predict_raw_data(classifier_path: Path, raw_frame: pd.DataFrame) -> pd.DataFrame:
     """Kompatybilna inferencja klasyfikatora bez uruchamiania explainera."""
     prepared = interpolate_raw_spectra(raw_frame)
-    return prediction_frame(
-        load_exported_model(classifier_path), prepared
-    ).drop(columns="confidence")
+    return prediction_frame(load_exported_model(classifier_path), prepared)[
+        ["engine_id", "cylinder", "label", "severity"]
+    ].copy()
+
+
+def display_explanations(
+    explanations: pd.DataFrame, only_anomalies: bool = False, limit: int | None = None
+) -> None:
+    """Wyświetla czytelny werdykt, confidence głosowania i podejrzane pasmo."""
+    rows = explanations
+    if only_anomalies:
+        rows = rows[rows.label != "ok"]
+    if limit is not None:
+        rows = rows.head(limit)
+    for row in rows.itertuples(index=False):
+        print(
+            f"[{row.engine_id} / cylinder {row.cylinder}] "
+            f"{str(row.label).upper()} ({row.severity}) | "
+            f"vote confidence={100.0 * row.vote_confidence:.1f}% | "
+            f"{row.explanation}"
+        )
+
+
+def _frame_from_server_input(data) -> pd.DataFrame:
+    if isinstance(data, pd.DataFrame):
+        return data.copy()
+    if isinstance(data, (list, tuple)):
+        return pd.DataFrame(list(data))
+    if isinstance(data, dict):
+        if "records" in data:
+            return pd.DataFrame(data["records"])
+        if "data" in data:
+            return pd.DataFrame(data["data"])
+        if all(np.isscalar(value) or value is None for value in data.values()):
+            return pd.DataFrame([data])
+        return pd.DataFrame(data)
+    raise TypeError("data musi być DataFrame, listą rekordów albo słownikiem JSON")
+
+
+def predict(
+    data,
+    classifier_path: Path | str = MODEL_DIR / "acoustic_model2.pkl",
+    explainer_path: Path | str = MODEL_DIR / "verdict_explainer.pkl",
+    include_bands: bool = False,
+    display: bool = False,
+) -> dict:
+    """Publiczne API inferencji dla FastAPI, Flask lub innego serwera.
+
+    Zwracany słownik jest w pełni serializowalny przez JSON. Żądanie musi
+    zawierać wszystkie cylindry każdego przekazanego silnika.
+    """
+    frame = _frame_from_server_input(data)
+    _, explanations, bands = predict_and_explain(
+        Path(classifier_path), Path(explainer_path), frame
+    )
+    if display:
+        display_explanations(explanations)
+    response = {
+        "results": json.loads(explanations.to_json(orient="records")),
+        "model_votes": int(explanations.n_model_votes.iloc[0]) if len(explanations) else 0,
+    }
+    if include_bands:
+        response["bands"] = json.loads(bands.to_json(orient="records"))
+    return response
 
 
 def parse_args():
@@ -565,6 +694,14 @@ def parse_args():
     parser.add_argument(
         "--bands-output", type=Path, default=MODEL_DIR / "model2_band_explanations.csv"
     )
+    parser.add_argument(
+        "--show-explanations", action="store_true",
+        help="wyświetl wyjaśnienia anomalnych cylindrów w terminalu",
+    )
+    parser.add_argument(
+        "--show-limit", type=int, default=20,
+        help="maksymalna liczba wyświetlonych wyjaśnień",
+    )
     return parser.parse_args()
 
 
@@ -588,7 +725,9 @@ def main() -> None:
 
     prediction_with_confidence = prediction_frame(classifier, test)
     args.predictions_output.parent.mkdir(parents=True, exist_ok=True)
-    prediction_with_confidence.drop(columns="confidence").to_csv(
+    prediction_with_confidence[
+        ["engine_id", "cylinder", "label", "severity"]
+    ].to_csv(
         args.predictions_output, index=False
     )
 
@@ -599,6 +738,11 @@ def main() -> None:
     args.bands_output.parent.mkdir(parents=True, exist_ok=True)
     explanations.to_csv(args.explanations_output, index=False)
     bands.to_csv(args.bands_output, index=False)
+    if args.show_explanations:
+        print("\nWyjaśnienia wykrytych anomalii:")
+        display_explanations(
+            explanations, only_anomalies=True, limit=args.show_limit
+        )
 
     print(f"Wyeksportowano klasyfikator: {args.model_output}")
     print(f"Wyeksportowano explainer: {args.explainer_output}")
