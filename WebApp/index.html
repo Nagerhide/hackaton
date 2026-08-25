@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="pl">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSV Predictor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <canvas id="interactiveWallpaper" aria-hidden="true"></canvas>
+    <main class="card">
+        <header class="brand-header">
+            <div class="brand-logo-frame">
+                <img class="brand-logo" src="../images/logo.png" alt="PIHER2">
+            </div>
+            <div>
+                <p class="eyebrow">PIHER2 · DIAGNOSTYKA AKUSTYCZNA</p>
+                <h1 class="title">PIHER2 Engine Failure Predictor</h1>
+                <p class="subtitle">Wybierz plik CSV lub ZIP z jednym plikiem CSV, aby wygenerować predykcję.</p>
+            </div>
+        </header>
+
+        <div class="upload-box">
+            <input
+                type="file"
+                id="file"
+                accept=".csv,.zip,text/csv,application/zip"
+            >
+
+            <button
+                type="button"
+                id="uploadButton"
+            >
+                Wyślij plik
+            </button>
+
+            <button
+                type="button"
+                id="previewButton"
+            >
+                Podgląd
+            </button>
+        </div>
+
+        <div id="status" aria-live="polite"></div>
+        <section id="previewPanel" aria-label="Podgląd pliku">
+            <button type="button" id="closePreviewButton" aria-label="Zamknij podgląd">×</button>
+            <pre id="preview" aria-live="polite"></pre>
+        </section>
+
+        <a
+            id="download"
+            href="#"
+            download="wynik.csv"
+            style="display:none"
+        >
+            ⬇ Pobierz wynik predykcji
+        </a>
+
+        <section id="healthPanel" aria-labelledby="healthTitle">
+            <div class="health-header">
+                <h2 id="healthTitle">Panel zdrowia silnika</h2>
+                <select id="engineSelect" aria-label="Wybierz silnik"></select>
+            </div>
+            <p id="healthSummary"></p>
+            <div id="cylinderGrid" aria-label="Stan cylindrów"></div>
+            <div id="cylinderDetails" aria-live="polite"></div>
+        </section>
+
+        <section id="engineRankingPanel" aria-labelledby="engineRankingTitle">
+            <h2 id="engineRankingTitle">Ocena silników</h2>
+            <div id="engineRanking"></div>
+        </section>
+
+        <section id="faultChartPanel" aria-labelledby="faultChartTitle">
+            <h2 id="faultChartTitle">Najczęściej wykrywane usterki</h2>
+            <div class="fault-chart-content">
+                <canvas id="faultChart" role="img" aria-label="Diagram kołowy wykrytych usterek"></canvas>
+                <div id="faultLegend" aria-live="polite"></div>
+            </div>
+        </section>
+    </main>
+
+    <script src="script.js"></script>
+
+</body>
+</html>
