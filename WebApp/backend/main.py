@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 import sys
 import zipfile
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
@@ -19,6 +21,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[2]
 WEBAPP_DIR = PROJECT_DIR / "WebApp"
 MODEL_PATH = PROJECT_DIR / "model" / "acoustic_model2.pkl"
 EXPLAINER_PATH = PROJECT_DIR / "model" / "verdict_explainer.pkl"
+REFERENCE_SPECTRA_PATH = WEBAPP_DIR / "reference_spectra.json"
 
 # Ten moduł może być uruchamiany zarówno z katalogu projektu, jak i bezpośrednio
 # z WebApp/backend. W obu przypadkach importujemy jeden, publiczny punkt inferencji.
@@ -112,6 +115,28 @@ def parse_csv(data: bytes) -> pd.DataFrame:
     return frame
 
 
+@lru_cache(maxsize=1)
+def load_reference_spectra() -> dict:
+    """Wczytuje gotowe średnie; endpoint predykcji nie przelicza pliku valid."""
+    if not REFERENCE_SPECTRA_PATH.is_file():
+        LOGGER.warning("Nie znaleziono %s", REFERENCE_SPECTRA_PATH)
+        return {"source": None, "by_label": {}, "profiles": []}
+
+    try:
+        with REFERENCE_SPECTRA_PATH.open(encoding="utf-8") as reference_file:
+            payload = json.load(reference_file)
+    except (OSError, json.JSONDecodeError):
+        LOGGER.exception("Nie można wczytać zapisanych widm referencyjnych")
+        return {"source": None, "by_label": {}, "profiles": []}
+
+    if not isinstance(payload.get("by_label"), dict) or not isinstance(
+        payload.get("profiles"), list
+    ):
+        LOGGER.error("Nieprawidłowy format %s", REFERENCE_SPECTRA_PATH)
+        return {"source": payload.get("source"), "by_label": {}, "profiles": []}
+    return payload
+
+
 async def run_prediction(file: UploadFile, include_bands: bool = False) -> dict:
     data = await read_uploaded_csv(file)
     frame = parse_csv(data)
@@ -127,19 +152,26 @@ async def run_prediction(file: UploadFile, include_bands: bool = False) -> dict:
     except Exception as error:  # pragma: no cover - ochronna granica endpointu
         LOGGER.exception("Predykcja model2 nie powiodła się")
         raise HTTPException(status_code=500, detail="Predykcja model2 nie powiodła się.") from error
+    reference_data = load_reference_spectra()
     response["input_rows"] = len(frame)
+    response["reference_spectra"] = reference_data["by_label"]
+    response["reference_profiles"] = reference_data["profiles"]
+    response["reference_spectra_source"] = reference_data.get("source")
     return response
 
 
 @app.get("/api/health")
 def health_check() -> dict:
     artifacts_ready = MODEL_PATH.is_file() and EXPLAINER_PATH.is_file()
+    reference_data = load_reference_spectra()
     return {
         "status": "ok" if artifacts_ready else "missing_model",
         "service": "model2-prediction-api",
         "model": MODEL_PATH.name,
         "explainer": EXPLAINER_PATH.name,
         "artifacts_ready": artifacts_ready,
+        "reference_spectra_ready": bool(reference_data["profiles"]),
+        "reference_spectra_source": reference_data.get("source"),
     }
 
 

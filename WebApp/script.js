@@ -1,13 +1,52 @@
 const button = document.getElementById("uploadButton");
 const previewButton = document.getElementById("previewButton");
 const closePreviewButton = document.getElementById("closePreviewButton");
+const themeToggle = document.getElementById("themeToggle");
+const themeToggleLabel = document.getElementById("themeToggleLabel");
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const API_BASE_URL = window.location.protocol === "file:" ? "http://127.0.0.1:8000" : "";
 let resultUrl;
+let referenceSpectra = {};
+let referenceProfiles = [];
+let referenceSpectraSource = "valid.csv";
 
 function apiUrl(path) {
     return `${API_BASE_URL}${path}`;
 }
+
+function storedTheme() {
+    try {
+        return localStorage.getItem("piher2-theme");
+    } catch {
+        return null;
+    }
+}
+
+function applyTheme(theme) {
+    const dark = theme === "dark";
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    themeToggle.setAttribute("aria-pressed", String(dark));
+    themeToggle.querySelector(".theme-toggle-icon").textContent = dark ? "☀" : "☾";
+    themeToggleLabel.textContent = dark ? "Tryb jasny" : "Tryb ciemny";
+    const selectedCylinder = document.querySelector(".cylinder.selected");
+    if (selectedCylinder) {
+        selectedCylinder.dataset.preventAutoScroll = "true";
+        selectedCylinder.click();
+        selectedCylinder.click();
+        delete selectedCylinder.dataset.preventAutoScroll;
+    }
+}
+
+applyTheme(storedTheme() || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+themeToggle.addEventListener("click", () => {
+    const nextTheme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    applyTheme(nextTheme);
+    try {
+        localStorage.setItem("piher2-theme", nextTheme);
+    } catch {
+        // Tryb nadal działa w bieżącej karcie, nawet gdy zapis jest zablokowany.
+    }
+});
 
 function createInteractiveWallpaper() {
     const canvas = document.getElementById("interactiveWallpaper");
@@ -119,30 +158,120 @@ const severityNames = {
     nie_dotyczy: "nie dotyczy"
 };
 
-// Reference spectra averaged from tests/val.csv; zero readings are excluded.
-const REFERENCE_SPECTRA = {
-    ok: [36.787445, 32.688668, 26.86844, 31.771518, 40.64802, 47.821801, 53.257961, 56.891998, 58.878828, 59.543585, 57.486526, 53.836857, 49.045771, 43.904297, 39.403157, 34.583845, 31.419899, 28.906088, 24.821973, 26.264314, 28.614216],
-    iglica: [37.548187, 35.665937, 26.584875, 32.16425, 39.826187, 45.209187, 44.471375, 47.310938, 46.420812, 44.045938, 44.674937, 43.910125, 42.285938, 36.843125, 31.96275, 30.743813, 30.082187, 24.829875, 17.45225, 16.226875, 18.552813],
-    zakoksowany: [32.844167, 27.388111, 25.926556, 33.496722, 43.911944, 51.215833, 56.018222, 57.178944, 52.882556, 40.926222, 51.781, 57.251389, 56.310389, 52.131833, 49.055111, 46.637333, 45.045889, 41.938111, 39.211667, 38.533389, 38.273389],
-    lejacy: [38.776786, 34.696714, 21.910357, 21.535571, 24.7555, 27.644643, 33.922214, 36.463643, 34.179571, 32.171286, 29.996929, 24.348643, 20.4665, 17.540643, 15.912143, 13.437571, 11.372214, 8.714, 6.687071, 5.9745, 5.663357],
-    pompa: [37.910444, 32.172, 23.974222, 18.038333, 31.225889, 41.654222, 47.700222, 49.646111, 49.899556, 48.363556, 45.06, 39.479111, 33.042889, 27.405444, 25.748778, 24.084, 26.091111, 30.586778, 33.979667, 31.193333, 27.893556]
-};
+function referenceProfileKey(label, severity = null) {
+    return `${label}:${severity || ""}`;
+}
 
-// Severity-specific reference spectra averaged from tests/val.csv.
-const ANOMALY_REFERENCE_SPECTRA = {
-    "iglica:male": [36.874, 33.223286, 25.188429, 34.114429, 40.801429, 46.707, 47.738, 50.938571, 50.305143, 48.530143, 48.270286, 46.413714, 44.168571, 39.414714, 35.828286, 35.040429, 32.570857, 26.215429, 16.487, 14.487571, 18.773571],
-    "iglica:srednie": [37.411286, 34.882714, 25.623, 30.458286, 38.403571, 44.164571, 42.859143, 45.094, 44.097571, 41.709286, 42.947714, 42.904571, 41.738143, 36.219571, 31.372857, 29.905, 28.986714, 22.855, 15.483143, 15.333143, 17.025143],
-    "iglica:duze": [40.387, 46.9565, 34.839, 31.3095, 41.392, 43.623, 38.681, 42.3735, 40.957, 36.5295, 38.1365, 38.667, 37.614, 30.025, 20.498, 18.6415, 25.206, 26.8925, 27.7225, 25.4425, 23.127],
-    "zakoksowany:male": [35.1175, 30.726167, 22.067, 31.8895, 42.469667, 50.245667, 55.844833, 58.234, 55.733833, 46.534, 52.793833, 55.646, 53.891, 49.556667, 46.216, 42.886667, 40.578, 35.4905, 31.077, 35.235, 34.0065],
-    "zakoksowany:srednie": [32.435375, 26.8245, 29.235875, 33.28375, 44.23875, 51.41, 55.966, 56.81625, 52.364125, 39.949875, 50.43125, 56.159375, 55.405125, 51.38125, 48.391375, 46.168375, 45.1685, 44.398375, 43.138, 40.1475, 40.212875],
-    "zakoksowany:duze": [30.25175, 23.50825, 25.09725, 36.3335, 45.42175, 52.28275, 56.38275, 56.32175, 49.6425, 34.46725, 52.96125, 61.8435, 61.75, 57.49575, 54.64125, 53.20125, 51.5025, 46.689, 43.561, 40.25275, 40.79475],
-    "lejacy:male": [39.285667, 35.202667, 26.743333, 23.129667, 27.858667, 33.884, 40.985333, 45.11, 44.418333, 42.939, 39.438667, 31.533667, 24.83, 20.260333, 18.068, 16.879333, 18.103667, 19.518, 17.393667, 15.818667, 16.166333],
-    "lejacy:srednie": [39.163833, 33.4265, 19.296667, 23.1935, 26.194667, 29.920833, 36.577333, 38.8735, 36.5585, 34.668333, 32.337667, 27.5065, 24.281333, 21.406167, 19.589, 16.51, 13.572, 8.976833, 5.125167, 4.1855, 3.627667],
-    "lejacy:duze": [38.007, 35.9174, 22.147, 18.5896, 21.1666, 21.1696, 26.4982, 28.384, 25.1816, 22.7142, 21.523, 16.2482, 13.2706, 11.2702, 10.2064, 7.6856, 4.6936, 1.9162, 2.1374, 2.2148, 1.8044],
-    "pompa:male": [37.3095, 31.624, 24.839, 21.41775, 31.8255, 42.6725, 49.59125, 52.837, 53.2915, 52.10725, 48.15575, 39.72175, 30.82575, 24.47575, 22.853, 23.36225, 26.203, 32.0665, 38.10175, 35.93775, 33.36925],
-    "pompa:srednie": [37.30125, 32.18425, 23.69625, 15.1955, 32.182, 41.38325, 46.242, 47.16925, 47.52825, 45.9895, 43.236, 39.6885, 35.123, 30.003, 27.63375, 23.9465, 26.63, 32.4025, 35.65575, 30.0585, 26.981],
-    "pompa:duze": [42.751, 34.315, 21.627, 15.892, 25.003, 38.665, 45.969, 46.79, 45.817, 42.885, 39.973, 37.671, 33.591, 28.734, 29.792, 27.521, 23.488, 17.405, 10.787, 16.755, 9.641]
-};
+function findReferenceProfile(label, severity = null) {
+    const exact = referenceProfiles.find(profile =>
+        profile.label === label && (profile.severity || null) === (severity || null)
+    );
+    return exact || null;
+}
+
+function createReferenceDrawer(initialProfile, onProfileChange) {
+    const drawer = document.createElement("details");
+    const summary = document.createElement("summary");
+    const body = document.createElement("div");
+    const help = document.createElement("p");
+    const tableWrap = document.createElement("div");
+    const table = document.createElement("table");
+    const caption = document.createElement("caption");
+    const header = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    const tableBody = document.createElement("tbody");
+    const severities = ["male", "srednie", "duze"];
+    const faultLabels = ["iglica", "lejacy", "pompa", "zakoksowany"];
+    let selectedKey = initialProfile
+        ? referenceProfileKey(initialProfile.label, initialProfile.severity)
+        : null;
+
+    drawer.className = "reference-drawer";
+    summary.textContent = "Średnie usterek";
+    body.className = "reference-drawer-body";
+    help.textContent = "Wybierz profil, aby nałożyć go na wykres. Kliknij ponownie, aby go wyłączyć.";
+    tableWrap.className = "reference-table-wrap";
+    table.className = "reference-table";
+    caption.textContent = "Typ awarii i jej poważność";
+
+    ["Typ awarii", "Mała", "Średnia", "Duża"].forEach(text => {
+        const cell = document.createElement("th");
+        cell.scope = "col";
+        cell.textContent = text;
+        headerRow.append(cell);
+    });
+    header.append(headerRow);
+
+    const createProfileButton = (profile, text = "Nałóż") => {
+        const profileKey = referenceProfileKey(profile.label, profile.severity);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "reference-profile-button";
+        button.dataset.profileKey = profileKey;
+        button.setAttribute("aria-pressed", String(profileKey === selectedKey));
+        button.classList.toggle("active", profileKey === selectedKey);
+        button.textContent = text;
+        button.title = `Nałóż średnią: ${labelNames[profile.label] || profile.label}${
+            profile.severity ? `, ${severityNames[profile.severity] || profile.severity}` : ""
+        }`;
+        button.addEventListener("click", () => {
+            selectedKey = selectedKey === profileKey ? null : profileKey;
+            table.querySelectorAll(".reference-profile-button").forEach(item => {
+                const active = item.dataset.profileKey === selectedKey;
+                item.classList.toggle("active", active);
+                item.setAttribute("aria-pressed", String(active));
+            });
+            onProfileChange(selectedKey === profileKey ? profile : null);
+        });
+        return button;
+    };
+
+    faultLabels.forEach(label => {
+        const row = document.createElement("tr");
+        const labelCell = document.createElement("th");
+        labelCell.scope = "row";
+        labelCell.textContent = labelNames[label] || label;
+        row.append(labelCell);
+        severities.forEach(severity => {
+            const cell = document.createElement("td");
+            const profile = findReferenceProfile(label, severity);
+            if (profile) cell.append(createProfileButton(profile));
+            else cell.textContent = "—";
+            row.append(cell);
+        });
+        tableBody.append(row);
+    });
+
+    const createStandaloneRow = (label, description, alwaysVisible = false) => {
+        const row = document.createElement("tr");
+        const labelCell = document.createElement("th");
+        const valueCell = document.createElement("td");
+        const profile = findReferenceProfile(label);
+        labelCell.scope = "row";
+        labelCell.textContent = labelNames[label] || label;
+        valueCell.colSpan = severities.length;
+        valueCell.className = "reference-standalone-cell";
+        if (profile && alwaysVisible) {
+            const marker = document.createElement("span");
+            marker.className = "reference-always-visible";
+            marker.textContent = description;
+            valueCell.append(marker);
+        } else if (profile) {
+            valueCell.append(createProfileButton(profile, description));
+        } else {
+            valueCell.textContent = "—";
+        }
+        row.append(labelCell, valueCell);
+        tableBody.append(row);
+    };
+
+    createStandaloneRow("ok", "bez poważności · zawsze na zielono", true);
+    table.append(caption, header, tableBody);
+    tableWrap.append(table);
+    body.append(help, tableWrap);
+    drawer.append(summary, body);
+    return drawer;
+}
 
 function parseCsv(text) {
     const rows = [];
@@ -229,12 +358,14 @@ function drawCylinderGraph(canvas, source, state, {
     height = 48,
     showScale = false,
     averageValues = null,
+    faultAverageValues = null,
     highlightedIndices = []
 } = {}) {
     const values = Array.from({ length: 21 }, (_, index) => Number(source[`mV_${index}`]));
     const plottedValues = [
         ...values,
-        ...(averageValues || [])
+        ...(averageValues || []),
+        ...(faultAverageValues || [])
     ].filter(value => Number.isFinite(value) && value !== 0);
     if (plottedValues.length < 2) return false;
 
@@ -256,6 +387,8 @@ function drawCylinderGraph(canvas, source, state, {
     const plotWidth = width - padding.left - padding.right;
     const plotHeight = height - padding.top - padding.bottom;
     const color = colors[state] || colors.unknown;
+    const darkTheme = document.documentElement.dataset.theme === "dark";
+    const axisTextColor = darkTheme ? "rgba(222, 239, 232, 0.72)" : "rgba(31, 41, 55, 0.68)";
 
     canvas.width = width * ratio;
     canvas.height = height * ratio;
@@ -266,7 +399,7 @@ function drawCylinderGraph(canvas, source, state, {
         context.font = "13px Arial, sans-serif";
         context.lineWidth = 1;
         context.strokeStyle = "rgba(22, 107, 77, 0.12)";
-        context.fillStyle = "rgba(31, 41, 55, 0.68)";
+        context.fillStyle = axisTextColor;
         context.textAlign = "right";
         context.textBaseline = "middle";
 
@@ -345,12 +478,13 @@ function drawCylinderGraph(canvas, source, state, {
     context.lineCap = "round";
     context.stroke();
 
-    if (averageValues) {
+    const drawReferenceLine = (referenceValues, strokeStyle, dash) => {
+        if (!referenceValues) return;
         context.beginPath();
         let started = false;
-        averageValues.forEach((value, index) => {
+        referenceValues.forEach((value, index) => {
             if (!Number.isFinite(value) || value === 0) return;
-            const x = padding.left + (index / (averageValues.length - 1)) * plotWidth;
+            const x = padding.left + (index / (referenceValues.length - 1)) * plotWidth;
             const y = height - padding.bottom - ((value - min) / span) * plotHeight;
             if (started) context.lineTo(x, y);
             else {
@@ -358,12 +492,14 @@ function drawCylinderGraph(canvas, source, state, {
                 started = true;
             }
         });
-        context.setLineDash([7, 5]);
-        context.strokeStyle = "rgba(31, 41, 55, 0.72)";
+        context.setLineDash(dash);
+        context.strokeStyle = strokeStyle;
         context.lineWidth = showScale ? 2 : 1.2;
         context.stroke();
         context.setLineDash([]);
-    }
+    };
+    drawReferenceLine(averageValues, "#16865f", [7, 5]);
+    drawReferenceLine(faultAverageValues, "#d97706", [3, 4]);
     return true;
 }
 
@@ -379,7 +515,8 @@ function enableGraphReadout(canvas, source, state, options, onPointHover) {
     const plotHeight = options.height - padding.top - padding.bottom;
     const max = Math.max(
         ...values.filter(value => Number.isFinite(value) && value !== 0),
-        ...(options.averageValues || []).filter(value => Number.isFinite(value) && value !== 0)
+        ...(options.averageValues || []).filter(value => Number.isFinite(value) && value !== 0),
+        ...(options.faultAverageValues || []).filter(value => Number.isFinite(value) && value !== 0)
     );
 
     const drawHoverMarker = (index, pointerY) => {
@@ -416,6 +553,7 @@ function enableGraphReadout(canvas, source, state, options, onPointHover) {
             index,
             value: hasData ? value : null,
             referenceValue: options.averageValues?.[index],
+            faultReferenceValue: options.faultAverageValues?.[index],
             x: (x / options.width) * bounds.width,
             y: (y / options.height) * bounds.height
         });
@@ -446,8 +584,35 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
     const metrics = document.getElementById("healthMetrics");
     const grid = document.getElementById("cylinderGrid");
     const details = document.getElementById("cylinderDetails");
+    const previousCylinder = document.getElementById("previousCylinder");
+    const nextCylinder = document.getElementById("nextCylinder");
+    const cylinderPosition = document.getElementById("cylinderPosition");
     const sourceByCylinder = new Map(sourceRows.map(row => [`${row.engine_id}:${row.cylinder}`, row]));
     const engines = [...new Set(predictions.map(row => row.engine_id))];
+    let cylinderButtons = [];
+    let selectedCylinderIndex = -1;
+
+    function updateCylinderNavigation() {
+        const count = cylinderButtons.length;
+        previousCylinder.disabled = selectedCylinderIndex <= 0;
+        nextCylinder.disabled = count === 0 || selectedCylinderIndex >= count - 1;
+        if (selectedCylinderIndex < 0) {
+            cylinderPosition.textContent = count ? `${count} cylindrów · wybierz pierwszy` : "Brak cylindrów";
+            nextCylinder.disabled = count === 0;
+            return;
+        }
+        const currentButton = cylinderButtons[selectedCylinderIndex];
+        cylinderPosition.textContent = `${currentButton.dataset.cylinderLabel} · ${selectedCylinderIndex + 1} z ${count}`;
+    }
+
+    function selectCylinderAt(index) {
+        if (index < 0 || index >= cylinderButtons.length) return;
+        cylinderButtons[index].click();
+        cylinderButtons[index].scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+
+    previousCylinder.onclick = () => selectCylinderAt(selectedCylinderIndex - 1);
+    nextCylinder.onclick = () => selectCylinderAt(selectedCylinderIndex < 0 ? 0 : selectedCylinderIndex + 1);
 
     engineSelect.replaceChildren(...engines.map(engineId => {
         const option = document.createElement("option");
@@ -493,6 +658,8 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
         grid.replaceChildren();
         details.style.display = "none";
         details.className = "cylinder-details";
+        cylinderButtons = [];
+        selectedCylinderIndex = -1;
 
         cylinders.forEach((row, index) => {
             const button = document.createElement("button");
@@ -504,6 +671,7 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
             button.type = "button";
             button.className = `cylinder ${state}`;
             button.setAttribute("aria-pressed", "false");
+            button.dataset.cylinderLabel = `Cylinder ${row.cylinder}`;
             button.title = `Pokaż szczegóły: cylinder ${row.cylinder}, stan: ${statusText}`;
             button.style.animationDelay = `${index * 45}ms`;
             number.className = "cylinder-number";
@@ -538,6 +706,8 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                     button.classList.remove("selected");
                     button.setAttribute("aria-pressed", "false");
                     details.style.display = "none";
+                    selectedCylinderIndex = -1;
+                    updateCylinderNavigation();
                     return;
                 }
                 grid.querySelectorAll(".cylinder").forEach(cylinder => {
@@ -546,6 +716,8 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                 });
                 button.classList.add("selected");
                 button.setAttribute("aria-pressed", "true");
+                selectedCylinderIndex = index;
+                updateCylinderNavigation();
                 details.className = `cylinder-details ${state}`;
                 const source = sourceByCylinder.get(`${row.engine_id}:${row.cylinder}`);
                 const createParameterSection = (title, parameters) => {
@@ -559,7 +731,16 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                         const item = document.createElement("div");
                         const name = document.createElement("dt");
                         const parameterValue = document.createElement("dd");
-                        const confidence = key === "confidence" || key.endsWith("_confidence")
+                        const confidenceFields = new Set([
+                            "confidence",
+                            "vote_confidence",
+                            "label_vote_confidence",
+                            "severity_vote_confidence",
+                            "confidence_before_optimization",
+                            "confidence_after_optimization",
+                            "confidence_gain"
+                        ]);
+                        const confidence = confidenceFields.has(key)
                             ? Number(value)
                             : null;
                         const readableNames = {
@@ -575,15 +756,29 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                             n_cylinders: "Liczba cylindrów",
                             suspicious_frequency_range: "Podejrzane pasmo",
                             suspicious_columns: "Podejrzane pomiary",
+                            imputed_columns: "Uzupełnione pasma (nie są dowodem)",
+                            n_imputed_measurements: "Liczba uzupełnionych pasm",
+                            confidence_optimization_applied: "Dostrojenie brakujących punktów",
+                            label_before_optimization: "Werdykt przed dostrojeniem",
+                            severity_before_optimization: "Nasilenie przed dostrojeniem",
+                            confidence_before_optimization: "Pewność przed dostrojeniem",
+                            confidence_after_optimization: "Pewność po dostrojeniu",
+                            confidence_gain: "Wzrost pewności",
+                            optimization_adjusted_columns: "Przesunięte brakujące punkty",
+                            optimization_candidate_evaluations: "Sprawdzone warianty",
                             peak_anomaly_score: "Maksymalny wynik anomalii",
                             direction: "Kierunek odchylenia",
                             template_similarity: "Podobieństwo do wzorca usterki",
                             explanation: "Wyjaśnienie werdyktu"
                         };
                         name.textContent = readableNames[key] || key.replace("_", " ");
-                        parameterValue.textContent = confidence != null && Number.isFinite(confidence)
-                            ? `${(confidence * 100).toFixed(1)}%`
-                            : (value === "" || value == null ? "—" : value);
+                        if (confidence != null && Number.isFinite(confidence)) {
+                            parameterValue.textContent = `${(confidence * 100).toFixed(1)}%`;
+                        } else if (typeof value === "boolean") {
+                            parameterValue.textContent = value ? "Tak" : "Nie";
+                        } else {
+                            parameterValue.textContent = value === "" || value == null ? "—" : value;
+                        }
                         item.append(name, parameterValue);
                         list.append(item);
                     });
@@ -593,19 +788,58 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                     return section;
                 };
                 const title = document.createElement("h3");
+                const detailsHeader = document.createElement("div");
+                const detailsNavigation = document.createElement("nav");
+                const previousDetail = document.createElement("button");
+                const nextDetail = document.createElement("button");
                 const prediction = { ...row };
                 delete prediction.engine_id;
                 delete prediction.cylinder;
                 delete prediction.confidence;
                 delete prediction.uncalibrated_probability_score;
                 delete prediction.band_scores_json;
+                delete prediction.explanation;
+                delete prediction.suspicious_columns;
+                delete prediction.suspicious_frequency_range;
                 prediction.label = labelNames[row.label] || row.label;
                 prediction.severity = severityNames[row.severity] || row.severity;
+                if (prediction.label_before_optimization) {
+                    prediction.label_before_optimization = labelNames[
+                        prediction.label_before_optimization
+                    ] || prediction.label_before_optimization;
+                }
+                if (prediction.severity_before_optimization) {
+                    prediction.severity_before_optimization = severityNames[
+                        prediction.severity_before_optimization
+                    ] || prediction.severity_before_optimization;
+                }
 
                 title.className = "cylinder-details-title";
                 title.textContent = `Szczegóły cylindra ${row.cylinder}`;
-                details.replaceChildren(title);
+                detailsHeader.className = "cylinder-details-header";
+                detailsNavigation.className = "cylinder-details-navigation";
+                detailsNavigation.setAttribute("aria-label", "Przejdź do sąsiedniego cylindra");
+                previousDetail.type = "button";
+                previousDetail.textContent = "←";
+                previousDetail.title = "Poprzedni cylinder";
+                previousDetail.setAttribute("aria-label", previousDetail.title);
+                previousDetail.disabled = index === 0;
+                previousDetail.onclick = () => selectCylinderAt(index - 1);
+                nextDetail.type = "button";
+                nextDetail.textContent = "→";
+                nextDetail.title = "Następny cylinder";
+                nextDetail.setAttribute("aria-label", nextDetail.title);
+                nextDetail.disabled = index === cylinders.length - 1;
+                nextDetail.onclick = () => selectCylinderAt(index + 1);
+                detailsNavigation.append(previousDetail, nextDetail);
+                detailsHeader.append(title, detailsNavigation);
+                details.replaceChildren(detailsHeader);
                 const missingMeasurements = countMissingMeasurements(source);
+                const suspiciousIndices = suspiciousMeasurementIndices(row.suspicious_columns);
+                const suspiciousRange = String(row.suspicious_frequency_range || "").trim();
+                const hasSuspiciousBand = suspiciousIndices.length > 0
+                    && suspiciousRange !== ""
+                    && !suspiciousRange.toLowerCase().startsWith("brak");
                 const overview = {
                     "Stan cylindra": row.label === "ok" ? "Sprawny" : "Wymaga sprawdzenia",
                     "Co wykryto": row.label === "ok"
@@ -617,9 +851,7 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                     "Pewność oceny": Number.isFinite(confidence)
                         ? `${(confidence * 100).toFixed(1)}%`
                         : "Brak danych",
-                    "Podejrzane pasmo": row.suspicious_frequency_range || "brak",
-                    "Wyjaśnienie werdyktu": row.explanation || "Brak dodatkowego wyjaśnienia.",
-                    "Brakujące odczyty": `${missingMeasurements} z 21`
+                    "Podejrzane pasmo": hasSuspiciousBand ? suspiciousRange : "brak"
                 };
                 const detailsLayout = document.createElement("div");
                 const detailsSummary = document.createElement("div");
@@ -629,6 +861,7 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                 detailsVisual.className = "cylinder-details-visual";
                 detailsSummary.append(createParameterSection("Najważniejsze informacje", overview));
                 let measurementSection;
+                let referenceDrawer;
                 if (source) {
                     const measurementParameters = { ...source };
                     delete measurementParameters.label;
@@ -640,26 +873,45 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                     const graphWrap = document.createElement("div");
                     const graph = document.createElement("canvas");
                     const graphTooltip = document.createElement("output");
-                    const cylinderType = isValidationFile && source.label ? source.label : row.label;
-                    const cylinderSeverity = isValidationFile && source.severity
-                        ? source.severity
-                        : row.severity;
-                    const referenceSpectrum = ANOMALY_REFERENCE_SPECTRA[
-                        `${cylinderType}:${cylinderSeverity}`
-                    ] || REFERENCE_SPECTRA[cylinderType] || null;
-                    const highlightedIndices = suspiciousMeasurementIndices(row.suspicious_columns);
+                    const referenceSpectrum = referenceSpectra.ok || null;
+                    let selectedReferenceProfile = row.label !== "ok"
+                        ? findReferenceProfile(
+                            row.label,
+                            row.label === "unknown" ? null : row.severity
+                        )
+                        : null;
+                    let faultReferenceSpectrum = selectedReferenceProfile?.values || null;
+                    let graphOptions;
+                    const highlightedIndices = hasSuspiciousBand ? suspiciousIndices : [];
                     graphSection.className = "cylinder-details-section";
                     graphTitle.textContent = "Widmo akustyczne cylindra";
                     graphLegend.className = "graph-legend";
-                    const referenceText = referenceSpectrum
-                        ? (cylinderType === "ok"
-                            ? "Linia przerywana pokazuje typowy przebieg dla sprawnego cylindra."
-                            : "Linia przerywana pokazuje typowy przebieg dla podobnej usterki.")
-                        : "";
-                    const highlightText = highlightedIndices.length
-                        ? "Czerwone tło wskazuje podejrzany fragment model2."
-                        : "";
-                    graphLegend.textContent = [referenceText, highlightText].filter(Boolean).join(" ");
+                    if (referenceSpectrum) {
+                        const healthyLegend = document.createElement("span");
+                        healthyLegend.className = "graph-legend-healthy";
+                        healthyLegend.textContent = `Średnie zdrowe widmo z ${referenceSpectraSource}`;
+                        graphLegend.append(healthyLegend);
+                    }
+                    const faultLegend = document.createElement("span");
+                    faultLegend.className = "graph-legend-fault";
+                    const updateFaultLegend = () => {
+                        faultLegend.remove();
+                        if (!selectedReferenceProfile) return;
+                        const severityText = selectedReferenceProfile.severity
+                            ? ` · ${severityNames[selectedReferenceProfile.severity] || selectedReferenceProfile.severity}`
+                            : " · bez poważności";
+                        faultLegend.textContent = `Średnia „${labelNames[selectedReferenceProfile.label] || selectedReferenceProfile.label}”${severityText} · ${referenceSpectraSource}`;
+                        const highlightLegend = graphLegend.querySelector(".graph-legend-highlight");
+                        if (highlightLegend) highlightLegend.before(faultLegend);
+                        else graphLegend.append(faultLegend);
+                    };
+                    updateFaultLegend();
+                    if (highlightedIndices.length) {
+                        const highlightLegend = document.createElement("span");
+                        highlightLegend.className = "graph-legend-highlight";
+                        highlightLegend.textContent = "Podejrzany fragment model2";
+                        graphLegend.append(highlightLegend);
+                    }
                     graph.className = "cylinder-details-graph";
                     graph.setAttribute("role", "img");
                     graph.setAttribute("aria-label", `Wykres widma akustycznego cylindra ${row.cylinder}. Najedź kursorem na wykres, aby odczytać wartość punktu.`);
@@ -669,17 +921,27 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                     graphTooltip.textContent = "Najedź na wykres";
                     graphWrap.append(graph, graphTooltip);
                     graphSection.append(graphTitle);
-                    if (referenceSpectrum || highlightedIndices.length) graphSection.append(graphLegend);
+                    if (graphLegend.childElementCount) graphSection.append(graphLegend);
                     graphSection.append(graphWrap);
                     measurementSection = createParameterSection("Pomiary techniczne", measurementParameters);
                     detailsVisual.append(graphSection);
+                    referenceDrawer = createReferenceDrawer(selectedReferenceProfile, profile => {
+                        selectedReferenceProfile = profile;
+                        faultReferenceSpectrum = profile?.values || null;
+                        updateFaultLegend();
+                        if (!graphOptions) return;
+                        graphOptions.faultAverageValues = faultReferenceSpectrum;
+                        graphTooltip.classList.remove("visible");
+                        drawCylinderGraph(graph, source, state, graphOptions);
+                    });
                     requestAnimationFrame(() => {
                         const graphBounds = graph.getBoundingClientRect();
-                        const graphOptions = {
+                        graphOptions = {
                             width: Math.round(graphBounds.width),
                             height: Math.round(graphBounds.height),
                             showScale: true,
                             averageValues: referenceSpectrum,
+                            faultAverageValues: faultReferenceSpectrum,
                             highlightedIndices
                         };
                         drawCylinderGraph(graph, source, state, graphOptions);
@@ -691,11 +953,15 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                             const tooltipX = Math.max(72, Math.min(point.x, graphBounds.width - 72));
                             const tooltipY = Math.max(34, point.y);
                             const referenceText = Number.isFinite(point.referenceValue) && point.referenceValue !== 0
-                                ? ` · wzorzec: ${point.referenceValue.toFixed(1)} mV`
+                                ? ` · zdrowa średnia: ${point.referenceValue.toFixed(1)} mV`
+                                : "";
+                            const faultReferenceText = Number.isFinite(point.faultReferenceValue)
+                                && point.faultReferenceValue !== 0
+                                ? ` · średnia usterki: ${point.faultReferenceValue.toFixed(1)} mV`
                                 : "";
                             graphTooltip.textContent = Number.isFinite(point.value)
-                                ? `mV_${point.index}: ${point.value.toFixed(1)} mV${referenceText}`
-                                : `mV_${point.index}: Brak danych${referenceText}`;
+                                ? `mV_${point.index}: ${point.value.toFixed(1)} mV${referenceText}${faultReferenceText}`
+                                : `mV_${point.index}: Brak danych${referenceText}${faultReferenceText}`;
                             graphTooltip.style.left = `${tooltipX}px`;
                             graphTooltip.style.top = `${tooltipY}px`;
                             graphTooltip.classList.add("visible");
@@ -708,13 +974,33 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                         }));
                     }
                 }
-                detailsSummary.append(createParameterSection(
-                    "Ocena modelu",
-                    prediction
-                ));
+                if (referenceDrawer) detailsSummary.append(referenceDrawer);
                 detailsLayout.append(detailsSummary);
                 if (detailsVisual.childElementCount) detailsLayout.append(detailsVisual);
+                const verdictStrip = document.createElement("div");
+                const verdictCopy = document.createElement("div");
+                const verdictTitle = document.createElement("strong");
+                const verdictText = document.createElement("span");
+                const verdictMeta = document.createElement("small");
+                verdictStrip.className = "verdict-strip";
+                verdictCopy.className = "verdict-copy";
+                verdictTitle.textContent = "Wyjaśnienie werdyktu";
+                verdictText.textContent = row.explanation || "Brak dodatkowego wyjaśnienia.";
+                verdictMeta.textContent = hasSuspiciousBand
+                    ? `Pasmo: ${suspiciousRange} · brakujące odczyty: ${missingMeasurements}/21`
+                    : `Brak pasma ponad progiem · brakujące odczyty: ${missingMeasurements}/21`;
+                verdictCopy.append(verdictTitle, verdictText);
+                verdictStrip.append(verdictCopy, verdictMeta);
+
+                const modelAssessment = document.createElement("details");
+                const modelAssessmentSummary = document.createElement("summary");
+                const modelAssessmentSection = createParameterSection("Parametry oceny", prediction);
+                modelAssessment.className = "model-assessment";
+                modelAssessmentSummary.textContent = "Ocena modelu";
+                modelAssessment.append(modelAssessmentSummary, modelAssessmentSection);
+
                 details.append(detailsLayout);
+                details.append(verdictStrip, modelAssessment);
                 if (measurementSection) {
                     const measurements = document.createElement("details");
                     const measurementsSummary = document.createElement("summary");
@@ -725,13 +1011,25 @@ function renderHealthPanel(predictions, sourceRows, isValidationFile = false) {
                     details.append(measurements);
                 }
                 details.style.display = "block";
+                if (button.dataset.preventAutoScroll !== "true") {
+                    requestAnimationFrame(() => {
+                        const graph = details.querySelector(".cylinder-details-graph");
+                        const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+                        (graph || details).scrollIntoView({
+                            behavior: reducedMotion ? "auto" : "smooth",
+                            block: "center"
+                        });
+                    });
+                }
             });
             grid.append(button);
+            cylinderButtons.push(button);
         });
+        updateCylinderNavigation();
     }
 
     engineSelect.onchange = displayEngine;
-    panel.style.display = "block";
+    panel.style.display = "none";
     displayEngine();
 }
 
@@ -800,100 +1098,158 @@ function renderEngineRanking(predictions, sourceRows) {
     const ranking = document.getElementById("engineRanking");
     const details = document.getElementById("engineRankingDetails");
     const title = document.getElementById("engineRankingTitle");
+    const sortSelect = document.getElementById("engineSort");
+    const engineSelect = document.getElementById("engineSelect");
+    const healthPanel = document.getElementById("healthPanel");
+    const engineDetailsHome = document.getElementById("engineDetailsHome");
     const severityScore = { male: 1, srednie: 2, duze: 3, nie_dotyczy: 0 };
+    const severityLabel = { 0: "brak", 1: "mała", 2: "średnia", 3: "duża" };
     const sourceByCylinder = new Map(sourceRows.map(row => [`${row.engine_id}:${row.cylinder}`, row]));
     const engines = [...new Set(predictions.map(row => row.engine_id))].map(engineId => {
         const cylinders = predictions.filter(row => row.engine_id === engineId);
         const faults = cylinders.filter(row => row.label !== "ok");
-        const faultRisk = faults.reduce((sum, row) => sum + (severityScore[row.severity] || 1), 0);
+        const severityValues = faults.map(row => severityScore[row.severity] || 1);
+        const faultRisk = severityValues.reduce((sum, value) => sum + value, 0);
+        const maxSeverity = severityValues.length ? Math.max(...severityValues) : 0;
+        const criticalCount = faults.filter(row => row.severity === "duze").length;
+        const confidences = cylinders
+            .map(row => Number(row.vote_confidence ?? row.confidence))
+            .filter(Number.isFinite);
+        const minimumConfidence = confidences.length
+            ? Math.min(...confidences)
+            : 0;
         const skippedMeasurements = cylinders.reduce((sum, cylinder) => {
             const source = sourceByCylinder.get(`${cylinder.engine_id}:${cylinder.cylinder}`);
             if (!source) return sum;
             return sum + Array.from({ length: 21 }, (_, index) => Number(source[`mV_${index}`]))
                 .filter(value => !Number.isFinite(value) || value === 0).length;
         }, 0);
+        const riskScore = faultRisk + skippedMeasurements / 21;
+        const faultPenalty = cylinders.length ? faultRisk / (cylinders.length * 3) : 1;
+        const dataPenalty = cylinders.length
+            ? skippedMeasurements / (cylinders.length * 21)
+            : 1;
         return {
             engineId,
             faultCount: faults.length,
+            criticalCount,
+            maxSeverity,
             skippedMeasurements,
-            score: faultRisk + Math.floor(skippedMeasurements/3)
+            riskScore,
+            uncertainty: 1 - minimumConfidence,
+            healthScore: Math.max(0, 100 * (1 - 0.8 * faultPenalty - 0.2 * dataPenalty))
         };
-    }).sort((first, second) =>
-        first.score - second.score || first.faultCount - second.faultCount || first.engineId.localeCompare(second.engineId)
-    );
-
-    const worstEngines = engines.reverse().slice(0, 10);
-    title.textContent = worstEngines.length === 1
-        ? "Najgorszy silnik"
-        : `Najgorsze ${worstEngines.length} silników`;
-    ranking.replaceChildren();
-    details.style.display = "none";
-
-    worstEngines.forEach((engine, index) => {
-        const card = document.createElement("button");
-        const rank = document.createElement("span");
-        const content = document.createElement("div");
-        const heading = document.createElement("strong");
-        const description = document.createElement("span");
-        const risk = document.createElement("span");
-        card.type = "button";
-        card.className = "engine-rating";
-        rank.className = "engine-rank";
-        rank.textContent = index + 1;
-        heading.textContent = engine.engineId;
-        description.textContent = `${engine.faultCount} usterek`;
-        risk.className = "engine-risk";
-        risk.textContent = `Ryzyko: ${engine.score}`;
-        content.append(heading, description);
-        card.append(rank, content, risk);
-        card.addEventListener("click", () => {
-            if (card.classList.contains("active")) {
-                card.classList.remove("active");
-                details.style.display = "none";
-                return;
-            }
-            const cylinders = predictions.filter(row => row.engine_id === engine.engineId);
-            const countBy = (rows, key, labels) => Object.entries(rows.reduce((counts, row) => {
-                counts[row[key]] = (counts[row[key]] || 0) + 1;
-                return counts;
-            }, {})).map(([value, count]) => `${labels[value] || value}: ${count}`).join(", ") || "brak";
-            const faults = cylinders.filter(row => row.label !== "ok");
-            const faultTypes = new Set(faults.map(row => row.label));
-            const severityFaults = faultTypes.size > 1
-                ? faults.filter(row => row.severity !== "nie_dotyczy")
-                : faults;
-            const stats = {
-                "Liczba cylindrów": cylinders.length,
-                "Wykryte usterki": engine.faultCount,
-                "Pominięte pomiary": engine.skippedMeasurements,
-                "Wskaźnik ryzyka": engine.score,
-                "Typy usterek": countBy(faults, "label", labelNames),
-                "Nasilenie": countBy(severityFaults, "severity", severityNames)
-            };
-            const title = document.createElement("h3");
-            const list = document.createElement("dl");
-            title.className = "engine-ranking-details-title";
-            title.textContent = `Statystyki silnika ${engine.engineId}`;
-            list.className = "engine-stat-grid";
-            Object.entries(stats).forEach(([name, value]) => {
-                const item = document.createElement("div");
-                const term = document.createElement("dt");
-                const definition = document.createElement("dd");
-                term.textContent = name;
-                definition.textContent = value;
-                item.append(term, definition);
-                list.append(item);
-            });
-            ranking.querySelectorAll(".engine-rating").forEach(item => item.classList.remove("active"));
-            card.classList.add("active");
-            details.replaceChildren(title, list);
-            card.after(details);
-            details.style.display = "block";
-        });
-        ranking.append(card);
     });
+    let selectedEngineId = null;
 
+    function placeHealthPanel(engineId) {
+        const selectedCard = [...ranking.querySelectorAll(".engine-rating")]
+            .find(card => card.dataset.engineId === engineId);
+        if (!selectedCard) return;
+        ranking.querySelectorAll(".engine-rating").forEach(card => {
+            card.classList.toggle("active", card === selectedCard);
+        });
+        selectedCard.after(healthPanel);
+        healthPanel.style.display = "block";
+    }
+
+    const sortModes = {
+        healthiest: {
+            title: "Najzdrowsze silniki",
+            compare: (first, second) =>
+                second.healthScore - first.healthScore
+                || first.riskScore - second.riskScore
+                || first.uncertainty - second.uncertainty,
+            metric: engine => `Zdrowie: ${engine.healthScore.toFixed(0)}%`
+        },
+        severity: {
+            title: "Silniki z najpoważniejszą usterką",
+            compare: (first, second) =>
+                second.maxSeverity - first.maxSeverity
+                || second.criticalCount - first.criticalCount
+                || second.riskScore - first.riskScore,
+            metric: engine => `Poważność: ${severityLabel[engine.maxSeverity]}`
+        },
+        risk: {
+            title: "Silniki o największym ryzyku",
+            compare: (first, second) =>
+                second.riskScore - first.riskScore
+                || second.maxSeverity - first.maxSeverity
+                || second.uncertainty - first.uncertainty,
+            metric: engine => `Ryzyko: ${engine.riskScore.toFixed(1)}`
+        },
+        uncertainty: {
+            title: "Silniki o największej niepewności",
+            compare: (first, second) =>
+                second.uncertainty - first.uncertainty
+                || second.riskScore - first.riskScore,
+            metric: engine => `Niepewność: ${(engine.uncertainty * 100).toFixed(1)}%`
+        }
+    };
+
+    function renderRanking() {
+        if (!engineDetailsHome.contains(healthPanel)) engineDetailsHome.append(healthPanel);
+        healthPanel.style.display = "none";
+        const modeName = sortModes[sortSelect.value] ? sortSelect.value : "risk";
+        const mode = sortModes[modeName];
+        const sortedEngines = [...engines]
+            .sort((first, second) => mode.compare(first, second) || first.engineId.localeCompare(second.engineId));
+        title.textContent = `${mode.title} (${sortedEngines.length})`;
+        ranking.replaceChildren();
+        details.replaceChildren();
+        details.style.display = "none";
+
+        sortedEngines.forEach((engine, index) => {
+            const card = document.createElement("button");
+            const rank = document.createElement("span");
+            const content = document.createElement("div");
+            const heading = document.createElement("strong");
+            const description = document.createElement("span");
+            const metric = document.createElement("span");
+            const faultWord = engine.faultCount === 1
+                ? "usterka"
+                : engine.faultCount >= 2 && engine.faultCount <= 4 ? "usterki" : "usterek";
+            card.type = "button";
+            card.className = `engine-rating engine-rating-${modeName}`;
+            card.dataset.engineId = engine.engineId;
+            card.title = `Przejdź do silnika ${engine.engineId}`;
+            rank.className = "engine-rank";
+            rank.textContent = index + 1;
+            heading.textContent = engine.engineId;
+            description.textContent = `${engine.faultCount} ${faultWord} · ${engine.criticalCount} pilne`;
+            metric.className = "engine-risk";
+            metric.textContent = mode.metric(engine);
+            content.append(heading, description);
+            card.append(rank, content, metric);
+            card.addEventListener("click", () => {
+                selectedEngineId = engine.engineId;
+                engineSelect.value = engine.engineId;
+                engineSelect.dispatchEvent(new Event("change"));
+                requestAnimationFrame(() => {
+                    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+                    healthPanel.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "nearest" });
+                    engineSelect.focus({ preventScroll: true });
+                });
+            });
+            ranking.append(card);
+        });
+        if (selectedEngineId) placeHealthPanel(selectedEngineId);
+    }
+
+    const displaySelectedEngine = engineSelect.onchange;
+    engineSelect.onchange = event => {
+        displaySelectedEngine?.call(engineSelect, event);
+        selectedEngineId = engineSelect.value;
+        placeHealthPanel(selectedEngineId);
+    };
+    sortSelect.onchange = () => {
+        selectedEngineId = null;
+        if (!engineDetailsHome.contains(healthPanel)) engineDetailsHome.append(healthPanel);
+        healthPanel.style.display = "none";
+        renderRanking();
+    };
     panel.style.display = "block";
+    renderRanking();
 }
 
 previewButton.addEventListener("click", async function () {
@@ -988,6 +1344,11 @@ button.addEventListener("click", async function () {
             throw new Error("Serwer zwrócił nieprawidłowy format odpowiedzi model2.");
         }
 
+        referenceSpectra = payload.reference_spectra || {};
+        referenceProfiles = Array.isArray(payload.reference_profiles)
+            ? payload.reference_profiles
+            : [];
+        referenceSpectraSource = payload.reference_spectra_source || "valid.csv";
         const predictions = payload.results;
         const sourceText = await readSourceCsv(file);
         const sourceRows = parseCsv(sourceText);
@@ -996,7 +1357,13 @@ button.addEventListener("click", async function () {
             && Object.prototype.hasOwnProperty.call(row, "severity")
         );
 
-        const text = rowsToCsv(predictions);
+        const exportRows = predictions.map(row => ({
+            engine_id: row.engine_id,
+            cylinder: row.cylinder,
+            label: row.label,
+            severity: row.severity
+        }));
+        const text = rowsToCsv(exportRows);
         const resultBlob = new Blob([text], { type: "text/csv;charset=utf-8" });
         if (resultUrl) URL.revokeObjectURL(resultUrl);
         const url = URL.createObjectURL(resultBlob);
@@ -1005,8 +1372,13 @@ button.addEventListener("click", async function () {
         download.href = url;
         download.download = "wynik_model2.csv";
         download.textContent = isValidationFile
-            ? "⬇ Pobierz wynik"
-            : "⬇ Pobierz wynik predykcji";
+            ? "Pobierz wynik CSV"
+            : "Pobierz predykcję CSV";
+        download.title = "CSV: engine_id, cylinder, label, severity";
+        download.setAttribute(
+            "aria-label",
+            `${download.textContent}: engine_id, cylinder, label, severity`
+        );
         download.style.display = "inline-flex";
 
         renderHealthPanel(predictions, sourceRows, isValidationFile);

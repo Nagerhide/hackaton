@@ -35,9 +35,51 @@ W jednym żądaniu trzeba przekazać wszystkie cylindry każdego silnika. Kolumn
 `label` oraz `severity` mogą występować w pliku walidacyjnym, ale nie są
 wymagane do predykcji.
 
+Brakujące pasma nie są interpolowane prostą pomiędzy sąsiednimi częstotliwościami.
+Model uzupełnia je medianowym profilem pozostałych cylindrów tego samego silnika,
+skorygowanym o lokalne przesunięcie danego cylindra. Zachowuje przy tym maskę
+braków: wartość uzupełniona może posłużyć klasyfikatorowi do zachowania pełnego
+wektora wejściowego, ale explainer nigdy nie zaznaczy jej jako przyczyny werdyktu.
+Jeżeli dla danego pasma nie istnieje żaden rzeczywisty pomiar w całym silniku,
+żądanie jest odrzucane zamiast tworzenia niewiarygodnej wartości.
+
+Jeżeli cylinder ma uzupełnione pasma i confidence poniżej `0.75`, model wykonuje
+ograniczone dostrojenie tych punktów. Sprawdza wartości bliskie imputacji,
+wyznaczone z kwantyli pozostałych cylindrów, ale nie może zmienić zmierzonego
+punktu, etykiety ani nasilenia żadnego cylindra. Przyjmuje tylko ruch zwiększający
+confidence bez obniżenia confidence pozostałych cylindrów. Pola
+`confidence_before_optimization`, `confidence_after_optimization` oraz
+`optimization_adjusted_columns` umożliwiają audyt każdej takiej zmiany.
+
+Odporność można odtworzyć poleceniem:
+
+```bash
+.venv/bin/python -B tests/benchmark_missing_data.py --masks 5
+```
+
+Benchmark używa Group 5-Fold po `engine_id` i w każdej próbie usuwa dokładnie
+10% wartości `mV`, bez udostępniania modelowi prawdziwych usuniętych wartości.
+
 Po analizie WebApp pokazuje etykietę, nasilenie, confidence z głosowania
-ensemble, wyjaśnienie oraz podejrzany fragment widma. Pełny wynik można pobrać
-jako `wynik_model2.csv`.
+ensemble, wyjaśnienie oraz podejrzany fragment widma. Przycisk eksportu zapisuje
+`wynik_model2.csv` zawierający wyłącznie kolumny `engine_id`, `cylinder`, `label`
+i `severity` (w tej kolejności).
+
+## Biblioteka silników
+
+Po przesłaniu danych aplikacja najpierw pokazuje pełną listę silników. Można ją
+sortować według zdrowia, najpoważniejszej usterki, ryzyka albo niepewności.
+Niepewność silnika jest liczona z najmniejszego confidence jego cylindra
+(`1 - min(vote_confidence)`), dzięki czemu pojedynczy niepewny werdykt nie jest
+ukrywany przez średnią. Kliknięcie silnika rozwija jego parametry i cylindry.
+
+Wykres cylindra porównuje pomiar ze średnim zdrowym widmem. W wysuwanej tabeli
+„typ awarii × poważność” można dodatkowo włączyć jeden profil usterki; ponowne
+kliknięcie wyłącza nakładkę. Wiersze `ok` i `unknown` nie mają poziomu
+poważności. Referencje zostały policzone z `tests/val.csv` po liniowej
+interpolacji braków w każdym wierszu i są zapisane na stałe w
+`WebApp/reference_spectra.json`. Backend jedynie wczytuje gotowy plik podczas
+startu procesu — nie przelicza zbioru walidacyjnego przy predykcji.
 
 ## API
 

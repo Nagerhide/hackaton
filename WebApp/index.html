@@ -9,6 +9,16 @@
 </head>
 
 <body>
+    <header class="top-bar">
+        <a class="top-bar-brand" href="#" aria-label="Przejdź na początek strony">
+            <span class="top-bar-mark">PH2</span>
+            <span>Biblioteka diagnostyczna</span>
+        </a>
+        <button type="button" id="themeToggle" class="theme-toggle" aria-pressed="false">
+            <span class="theme-toggle-icon" aria-hidden="true">☾</span>
+            <span id="themeToggleLabel">Tryb ciemny</span>
+        </button>
+    </header>
     <canvas id="interactiveWallpaper" aria-hidden="true"></canvas>
     <main class="card">
         <header class="brand-header">
@@ -59,6 +69,26 @@
             ⬇ Pobierz wynik predykcji
         </a>
 
+        <section id="engineRankingPanel" aria-labelledby="engineRankingTitle">
+            <p class="panel-kicker">BIBLIOTEKA SILNIKÓW</p>
+            <div class="ranking-header">
+                <h2 id="engineRankingTitle">Silniki według ryzyka</h2>
+                <label class="engine-sort-control" for="engineSort">
+                    <span>Sortuj silniki</span>
+                    <select id="engineSort">
+                        <option value="healthiest">Najzdrowszy</option>
+                        <option value="severity">Najpoważniejsza usterka</option>
+                        <option value="risk" selected>Największe ryzyko</option>
+                        <option value="uncertainty">Największa niepewność</option>
+                    </select>
+                </label>
+            </div>
+            <p class="library-hint">Wybierz silnik, aby rozwinąć jego parametry i cylindry.</p>
+            <div id="engineRanking"></div>
+            <div id="engineRankingDetails" aria-live="polite"></div>
+        </section>
+
+        <div id="engineDetailsHome" class="engine-details-home">
         <section id="healthPanel" aria-labelledby="healthTitle">
             <div class="health-header">
                 <div>
@@ -80,15 +110,15 @@
                 <span><i class="guide-dot guide-unknown"></i>Inna anomalia</span>
                 <small>Kliknij cylinder, aby zobaczyć prosty opis i wykres.</small>
             </div>
+            <nav class="cylinder-navigation" aria-label="Nawigacja między cylindrami">
+                <button type="button" id="previousCylinder" disabled>← Poprzedni</button>
+                <output id="cylinderPosition">Wybierz cylinder</output>
+                <button type="button" id="nextCylinder">Następny →</button>
+            </nav>
             <div id="cylinderGrid" aria-label="Stan cylindrów"></div>
             <div id="cylinderDetails" aria-live="polite"></div>
         </section>
-
-        <section id="engineRankingPanel" aria-labelledby="engineRankingTitle">
-            <h2 id="engineRankingTitle">10 silników wymagających uwagi</h2>
-            <div id="engineRanking"></div>
-            <div id="engineRankingDetails" aria-live="polite"></div>
-        </section>
+        </div>
 
         <section id="faultChartPanel" aria-labelledby="faultChartTitle">
             <h2 id="faultChartTitle">Najczęściej wykrywane usterki</h2>

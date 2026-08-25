@@ -34,6 +34,10 @@ LABELS = ["ok", "zakoksowany", "lejacy", "pompa", "iglica", "unknown"]
 FAULT_LABELS = ["zakoksowany", "lejacy", "pompa", "iglica"]
 SEVERITIES = ["male", "srednie", "duze"]
 DEFAULT_CV_SEEDS = [1, 7, 13, 21, 42, 84, 123, 256, 777, 2026]
+IMPUTED_MASK_ATTR = "imputed_frequency_mask"
+LOW_CONFIDENCE_THRESHOLD = 0.75
+CONFIDENCE_OPTIMIZATION_MIN_GAIN = 1e-4
+CONFIDENCE_CANDIDATE_QUANTILES = (0.10, 0.25, 0.50, 0.75, 0.90)
 
 
 def validate_schema(frame: pd.DataFrame, require_labels: bool = False) -> None:
@@ -54,17 +58,63 @@ def validate_schema(frame: pd.DataFrame, require_labels: bool = False) -> None:
 
 
 def interpolate_raw_spectra(frame: pd.DataFrame) -> pd.DataFrame:
-    """Interpoluje braki wzdłuż pasm bez dopasowywania normalizacji."""
+    """Uzupełnia braki profilem pozostałych cylindrów tego samego silnika.
+
+    Liniowa interpolacja wzdłuż jednego widma potrafi tworzyć nieistniejące
+    piki. Tutaj brakujące pasmo bierze poziom mediany innych cylindrów, a
+    lokalne przesunięcie cylindra wyznaczają najbliższe rzeczywiste pomiary po
+    lewej i prawej stronie. Pierwotna maska braków zostaje zachowana dla
+    explainera, który nie może uznać wartości imputowanej za dowód usterki.
+    """
     validate_schema(frame)
     result = frame.copy()
     missing = [column for column in FREQ_COLS if column not in result.columns]
     if missing:
         raise ValueError(f"Brak kolumn częstotliwości: {missing}")
-    result[FREQ_COLS] = result[FREQ_COLS].interpolate(
-        method="linear", axis=1, limit_direction="both"
-    )
-    if result[FREQ_COLS].isna().any().any():
-        raise ValueError("Widmo bez żadnego pomiaru nie może zostać interpolowane")
+
+    numeric = result[FREQ_COLS].apply(pd.to_numeric, errors="coerce")
+    numeric = numeric.replace([np.inf, -np.inf], np.nan)
+    spectra = numeric.to_numpy(dtype=float, copy=True)
+    imputed_mask = ~np.isfinite(spectra)
+
+    for engine_id, positions in result.groupby("engine_id", sort=False).indices.items():
+        positions = np.asarray(positions, dtype=int)
+        engine_spectra = spectra[positions].copy()
+        peer_profile = pd.DataFrame(engine_spectra).median(axis=0).to_numpy(dtype=float)
+        bands_with_missing = np.any(~np.isfinite(engine_spectra), axis=0)
+        missing_reference = np.flatnonzero(
+            bands_with_missing & ~np.isfinite(peer_profile)
+        )
+        if missing_reference.size:
+            columns = [FREQ_COLS[index] for index in missing_reference]
+            raise ValueError(
+                f"Silnik {engine_id} nie ma żadnego pomiaru dla pasm: {columns}"
+            )
+
+        for local_row, global_row in enumerate(positions):
+            row = engine_spectra[local_row]
+            observed = np.flatnonzero(np.isfinite(row) & np.isfinite(peer_profile))
+            if not observed.size:
+                cylinder = result.iloc[global_row].cylinder
+                raise ValueError(
+                    f"Silnik {engine_id}, cylinder {cylinder}: brak wszystkich pomiarów"
+                )
+
+            for band in np.flatnonzero(~np.isfinite(row)):
+                left = observed[observed < band][-1:]
+                right = observed[observed > band][:1]
+                neighbours = np.concatenate([left, right])
+                if not neighbours.size:
+                    neighbours = observed
+                local_offset = float(
+                    np.median(row[neighbours] - peer_profile[neighbours])
+                )
+                spectra[global_row, band] = peer_profile[band] + local_offset
+
+    if not np.isfinite(spectra).all():
+        raise ValueError("Nie można wiarygodnie uzupełnić wszystkich braków widma")
+    result[FREQ_COLS] = spectra
+    result.attrs[IMPUTED_MASK_ATTR] = imputed_mask
     return result
 
 
@@ -248,11 +298,246 @@ def prediction_frame(model, frame: pd.DataFrame) -> pd.DataFrame:
             "n_model_votes": np.ones(len(frame), dtype=int),
         }
     result = frame[["engine_id", "cylinder"]].reset_index(drop=True).copy()
+    result.attrs = {}
     result["label"] = labels
     result["severity"] = severities
     result["confidence"] = details["vote_confidence"]
     for name, values in details.items():
         result[name] = values
+    return result
+
+
+def optimize_imputed_spectra(
+    model,
+    frame: pd.DataFrame,
+    imputed_mask: np.ndarray | None = None,
+    confidence_threshold: float = LOW_CONFIDENCE_THRESHOLD,
+    max_passes: int = 2,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Poprawia pewność, zmieniając wyłącznie brakujące punkty w bezpiecznym zakresie.
+
+    Kandydaci są kwantylami rzeczywistych wartości pozostałych cylindrów tego
+    samego silnika. Zmiana jest przyjmowana, gdy zwiększa confidence głosowania
+    albo — przy remisie głosów — wynik probabilistyczny. Odrzucamy kandydatów,
+    które zmieniają werdykt lub obniżają confidence jakiegokolwiek innego
+    cylindra. Typ werdyktu optymalizowanego cylindra też
+    pozostaje zamrożony, aby nie wybierać etykiety przez sztuczne pompowanie
+    confidence.
+    """
+    if not 0.0 <= confidence_threshold <= 1.0:
+        raise ValueError("Próg confidence musi należeć do zakresu 0–1")
+    if max_passes < 1:
+        raise ValueError("max_passes musi być dodatnie")
+
+    optimized = frame.copy()
+    if imputed_mask is None:
+        imputed_mask = frame.attrs.get(IMPUTED_MASK_ATTR)
+    if imputed_mask is None:
+        imputed_mask = np.zeros((len(frame), len(FREQ_COLS)), dtype=bool)
+    imputed_mask = np.asarray(imputed_mask, dtype=bool)
+    if imputed_mask.shape != (len(frame), len(FREQ_COLS)):
+        raise ValueError("Maska imputacji ma nieprawidłowy rozmiar")
+
+    baseline_predictions = prediction_frame(model, optimized)
+    before_label = baseline_predictions.label.to_numpy(dtype=object)
+    before_severity = baseline_predictions.severity.to_numpy(dtype=object)
+    before_confidence = baseline_predictions.vote_confidence.to_numpy(dtype=float)
+    after_confidence = np.zeros(len(frame), dtype=float)
+    adjusted_columns = [set() for _ in range(len(frame))]
+    candidate_evaluations = np.zeros(len(frame), dtype=int)
+
+    def is_better(candidate, current) -> bool:
+        candidate_vote = float(candidate.vote_confidence)
+        current_vote = float(current.vote_confidence)
+        if candidate_vote > current_vote + 1e-12:
+            return True
+        return (
+            abs(candidate_vote - current_vote) <= 1e-12
+            and float(candidate.probability_score)
+            > float(current.probability_score) + CONFIDENCE_OPTIMIZATION_MIN_GAIN
+        )
+
+    for _, positions in optimized.groupby("engine_id", sort=False).indices.items():
+        positions = np.asarray(positions, dtype=int)
+        engine_frame = optimized.iloc[positions].copy()
+        engine_mask = imputed_mask[positions]
+        current_predictions = baseline_predictions.iloc[positions].reset_index(drop=True)
+
+        row_order = np.argsort(
+            current_predictions.vote_confidence.to_numpy(dtype=float)
+        )
+        for local_row in row_order:
+            missing_bands = np.flatnonzero(engine_mask[local_row])
+            if not missing_bands.size:
+                continue
+            if (
+                float(current_predictions.iloc[local_row].vote_confidence)
+                >= confidence_threshold
+            ):
+                continue
+
+            for _ in range(max_passes):
+                pass_improved = False
+                for band in missing_bands:
+                    observed_peers = engine_frame.loc[
+                        ~engine_mask[:, band], FREQ_COLS[band]
+                    ].to_numpy(dtype=float)
+                    if observed_peers.size < 2:
+                        continue
+                    current_point = float(
+                        engine_frame.iloc[local_row][FREQ_COLS[band]]
+                    )
+                    peer_quantiles = np.quantile(
+                        observed_peers, CONFIDENCE_CANDIDATE_QUANTILES
+                    )
+                    peer_iqr = float(
+                        np.quantile(observed_peers, 0.75)
+                        - np.quantile(observed_peers, 0.25)
+                    )
+                    max_shift = max(0.05, 0.35 * peer_iqr)
+                    candidates = np.unique(
+                        np.concatenate(
+                            [
+                                [current_point],
+                                current_point
+                                + np.clip(
+                                    peer_quantiles - current_point,
+                                    -max_shift,
+                                    max_shift,
+                                ),
+                            ]
+                        )
+                    )
+                    best_predictions = current_predictions
+                    best_value = float(engine_frame.iloc[local_row][FREQ_COLS[band]])
+                    best_row = current_predictions.iloc[local_row]
+
+                    trial_values = [
+                        float(candidate)
+                        for candidate in candidates
+                        if not np.isclose(
+                            candidate, best_value, rtol=0.0, atol=1e-12
+                        )
+                    ]
+                    trial_frames = []
+                    for trial_index, candidate in enumerate(trial_values):
+                        trial = engine_frame.copy()
+                        trial.loc[trial.index[local_row], FREQ_COLS[band]] = candidate
+                        trial["engine_id"] = (
+                            f"__confidence_trial_{positions[local_row]}_{band}_{trial_index}"
+                        )
+                        trial.attrs = {}
+                        trial_frames.append(trial)
+
+                    if trial_frames:
+                        batch_predictions = prediction_frame(
+                            model, pd.concat(trial_frames, ignore_index=True)
+                        )
+                        candidate_evaluations[positions[local_row]] += len(trial_frames)
+                    else:
+                        batch_predictions = pd.DataFrame()
+
+                    engine_size = len(engine_frame)
+                    for trial_index, candidate in enumerate(trial_values):
+                        start = trial_index * engine_size
+                        trial_predictions = batch_predictions.iloc[
+                            start : start + engine_size
+                        ].reset_index(drop=True)
+                        trial_predictions[["engine_id", "cylinder"]] = (
+                            current_predictions[["engine_id", "cylinder"]]
+                        )
+
+                        other_rows = np.arange(len(engine_frame)) != local_row
+                        other_verdicts_stable = np.all(
+                            trial_predictions.loc[other_rows, "label"].to_numpy()
+                            == current_predictions.loc[other_rows, "label"].to_numpy()
+                        ) and np.all(
+                            trial_predictions.loc[other_rows, "severity"].to_numpy()
+                            == current_predictions.loc[other_rows, "severity"].to_numpy()
+                        )
+                        other_confidence_safe = np.all(
+                            trial_predictions.loc[
+                                other_rows, "vote_confidence"
+                            ].to_numpy(dtype=float)
+                            >= current_predictions.loc[
+                                other_rows, "vote_confidence"
+                            ].to_numpy(dtype=float)
+                            - 1e-12
+                        )
+                        candidate_row = trial_predictions.iloc[local_row]
+                        target_verdict_stable = (
+                            candidate_row.label
+                            == current_predictions.iloc[local_row].label
+                            and candidate_row.severity
+                            == current_predictions.iloc[local_row].severity
+                        )
+                        if (
+                            other_verdicts_stable
+                            and other_confidence_safe
+                            and target_verdict_stable
+                            and is_better(candidate_row, best_row)
+                        ):
+                            best_predictions = trial_predictions
+                            best_value = float(candidate)
+                            best_row = candidate_row
+
+                    current_value = float(engine_frame.iloc[local_row][FREQ_COLS[band]])
+                    if not np.isclose(best_value, current_value, rtol=0.0, atol=1e-12):
+                        engine_frame.loc[
+                            engine_frame.index[local_row], FREQ_COLS[band]
+                        ] = best_value
+                        current_predictions = best_predictions
+                        adjusted_columns[positions[local_row]].add(FREQ_COLS[band])
+                        pass_improved = True
+                        if (
+                            float(current_predictions.iloc[local_row].vote_confidence)
+                            >= confidence_threshold
+                        ):
+                            break
+                if (
+                    not pass_improved
+                    or float(current_predictions.iloc[local_row].vote_confidence)
+                    >= confidence_threshold
+                ):
+                    break
+
+        optimized.iloc[positions, optimized.columns.get_indexer(FREQ_COLS)] = (
+            engine_frame[FREQ_COLS].to_numpy(dtype=float)
+        )
+        after_confidence[positions] = current_predictions.vote_confidence.to_numpy(
+            dtype=float
+        )
+
+    optimized.attrs[IMPUTED_MASK_ATTR] = imputed_mask
+    audit = frame[["engine_id", "cylinder"]].reset_index(drop=True).copy()
+    audit["confidence_optimization_applied"] = [
+        bool(columns) for columns in adjusted_columns
+    ]
+    audit["label_before_optimization"] = before_label
+    audit["severity_before_optimization"] = before_severity
+    audit["confidence_before_optimization"] = before_confidence
+    audit["confidence_after_optimization"] = after_confidence
+    audit["confidence_gain"] = after_confidence - before_confidence
+    audit["optimization_adjusted_columns"] = [
+        ",".join(sorted(columns, key=FREQ_COLS.index))
+        for columns in adjusted_columns
+    ]
+    audit["optimization_candidate_evaluations"] = candidate_evaluations
+    return optimized, audit
+
+
+def attach_optimization_audit(
+    explanations: pd.DataFrame, audit: pd.DataFrame
+) -> pd.DataFrame:
+    """Dołącza audyt optymalizacji, pilnując kolejności cylindrów."""
+    result = explanations.copy()
+    keys = ["engine_id", "cylinder"]
+    if not result[keys].reset_index(drop=True).equals(
+        audit[keys].reset_index(drop=True)
+    ):
+        raise ValueError("Audyt optymalizacji nie odpowiada kolejności wyjaśnień")
+    for column in audit.columns.difference(keys, sort=False):
+        result[column] = audit[column].to_numpy()
     return result
 
 
@@ -368,7 +653,7 @@ def export_model(model, path: Path) -> None:
             "frequency_columns": FREQ_COLS,
             "labels": LABELS,
             "severities": SEVERITIES,
-            "preprocessing": "interpolation_and_exported_standard_scalers",
+            "preprocessing": "engine_peer_profile_imputation_and_exported_standard_scalers",
         },
         path,
         compress=3,
@@ -435,29 +720,63 @@ class SpectralVerdictExplainer:
         return self
 
     @staticmethod
-    def _template_similarity(profile: np.ndarray, template: np.ndarray | None) -> float:
+    def _template_similarity(
+        profile: np.ndarray,
+        template: np.ndarray | None,
+        observed_mask: np.ndarray | None = None,
+    ) -> float:
         if template is None:
             return float("nan")
+        if observed_mask is not None:
+            profile = profile[observed_mask]
+            template = template[observed_mask]
         denominator = np.linalg.norm(profile) * np.linalg.norm(template)
         return 0.0 if denominator < 1e-12 else float(profile @ template / denominator)
 
-    def _suspicious_interval(self, anomaly_score: np.ndarray, label: str):
-        smoothed = np.convolve(anomaly_score, [0.25, 0.5, 0.25], mode="same")
+    def _suspicious_interval(
+        self,
+        anomaly_score: np.ndarray,
+        label: str,
+        observed_mask: np.ndarray | None = None,
+    ):
+        if observed_mask is None:
+            observed_mask = np.ones(len(anomaly_score), dtype=bool)
+        else:
+            observed_mask = np.asarray(observed_mask, dtype=bool)
+        if not observed_mask.any():
+            return None, None, 0.0, np.zeros_like(anomaly_score, dtype=float)
+
+        # Imputowane punkty nie mogą wpływać na własny ani sąsiedni wynik.
+        observed_scores = np.where(observed_mask, anomaly_score, 0.0)
+        smoothed = np.convolve(observed_scores, [0.25, 0.5, 0.25], mode="same")
+        smoothed[~observed_mask] = 0.0
         peak = int(smoothed.argmax())
         peak_score = float(smoothed[peak])
-        # Dla predykcji OK pokazujemy fragment tylko przy wyraźnym odstępstwie.
-        if label == "ok" and peak_score < self.minimum_band_score:
+        # Pasmo pokazujemy wyłącznie wtedy, gdy rzeczywiście przekracza próg.
+        # Typ predykcji nie może sam wymusić zaznaczenia słabego odchylenia.
+        if peak_score < self.minimum_band_score:
             return None, None, peak_score, smoothed
         threshold = max(self.minimum_band_score, 0.55 * peak_score)
         start = end = peak
-        while start > 0 and smoothed[start - 1] >= threshold:
+        while (
+            start > 0
+            and observed_mask[start - 1]
+            and smoothed[start - 1] >= threshold
+        ):
             start -= 1
-        while end < len(smoothed) - 1 and smoothed[end + 1] >= threshold:
+        while (
+            end < len(smoothed) - 1
+            and observed_mask[end + 1]
+            and smoothed[end + 1] >= threshold
+        ):
             end += 1
         return start, end, peak_score, smoothed
 
     def explain(
-        self, frame: pd.DataFrame, predictions: pd.DataFrame
+        self,
+        frame: pd.DataFrame,
+        predictions: pd.DataFrame,
+        imputed_mask: np.ndarray | None = None,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         if len(frame) != len(predictions):
             raise ValueError("Dane i predykcje muszą mieć tyle samo wierszy")
@@ -465,6 +784,14 @@ class SpectralVerdictExplainer:
         prediction_keys = predictions[["engine_id", "cylinder"]].reset_index(drop=True)
         if not frame_keys.equals(prediction_keys):
             raise ValueError("Kolejność engine_id/cylinder w danych i predykcjach jest różna")
+        if imputed_mask is None:
+            imputed_mask = frame.attrs.get(IMPUTED_MASK_ATTR)
+        if imputed_mask is None:
+            imputed_mask = np.zeros((len(frame), len(FREQ_COLS)), dtype=bool)
+        imputed_mask = np.asarray(imputed_mask, dtype=bool)
+        if imputed_mask.shape != (len(frame), len(FREQ_COLS)):
+            raise ValueError("Maska imputacji ma nieprawidłowy rozmiar")
+
         relative = self._relative_profiles(self._scale_input(frame))
         signed_scores = (relative - self.healthy_center) / self.healthy_scale
         anomaly_scores = np.abs(signed_scores)
@@ -475,12 +802,14 @@ class SpectralVerdictExplainer:
         for row_index in range(len(frame)):
             label = str(predictions.iloc[row_index].label)
             severity = str(predictions.iloc[row_index].severity)
+            observed_mask = ~imputed_mask[row_index]
             start, end, peak_score, smoothed = self._suspicious_interval(
-                anomaly_scores[row_index], label
+                anomaly_scores[row_index], label, observed_mask
             )
             marked = np.zeros(len(FREQ_COLS), dtype=bool)
             if start is not None:
                 marked[start : end + 1] = True
+                marked[imputed_mask[row_index]] = False
                 signed_interval = signed_scores[row_index, start : end + 1]
                 direction = "podwyższona" if signed_interval.mean() >= 0 else "obniżona"
                 fragment = f"{start}–{end} kHz" if start != end else f"{start} kHz"
@@ -499,11 +828,25 @@ class SpectralVerdictExplainer:
                 direction = "brak istotnego odchylenia"
                 fragment = "brak"
                 suspicious_columns = ""
-                explanation = "Werdykt OK: brak pasma przekraczającego próg anomalii."
+                if label == "ok":
+                    explanation = (
+                        "Werdykt OK: brak zmierzonego pasma przekraczającego próg "
+                        "anomalii."
+                    )
+                else:
+                    explanation = (
+                        f"Klasyfikator wskazuje {label}, ale osobny explainer nie "
+                        "znalazł zmierzonego pasma przekraczającego próg anomalii."
+                    )
 
             template_similarity = self._template_similarity(
-                signed_scores[row_index], self.class_templates.get(label)
+                signed_scores[row_index], self.class_templates.get(label), observed_mask
             )
+            imputed_columns = [
+                column
+                for column, was_imputed in zip(FREQ_COLS, imputed_mask[row_index])
+                if was_imputed
+            ]
             summaries.append(
                 {
                     "engine_id": frame.iloc[row_index].engine_id,
@@ -523,26 +866,42 @@ class SpectralVerdictExplainer:
                     "n_model_votes": int(predictions.iloc[row_index].n_model_votes),
                     "suspicious_frequency_range": fragment,
                     "suspicious_columns": suspicious_columns,
+                    "imputed_columns": ",".join(imputed_columns),
+                    "n_imputed_measurements": len(imputed_columns),
                     "peak_anomaly_score": peak_score,
                     "direction": direction,
                     "template_similarity": template_similarity,
                     "explanation": explanation,
                     "band_scores_json": json.dumps(
-                        {column: round(float(score), 4) for column, score in zip(FREQ_COLS, smoothed)},
+                        {
+                            column: None if was_imputed else round(float(score), 4)
+                            for column, score, was_imputed in zip(
+                                FREQ_COLS, smoothed, imputed_mask[row_index]
+                            )
+                        },
                         ensure_ascii=False,
                     ),
                 }
             )
             for frequency, column in enumerate(FREQ_COLS):
+                was_imputed = bool(imputed_mask[row_index, frequency])
                 band_rows.append(
                     {
                         "engine_id": frame.iloc[row_index].engine_id,
                         "cylinder": frame.iloc[row_index].cylinder,
                         "frequency_khz": frequency,
                         "column": column,
-                        "amplitude_mv": raw_spectrum[row_index, frequency],
-                        "signed_deviation": signed_scores[row_index, frequency],
-                        "anomaly_score": smoothed[frequency],
+                        "amplitude_mv": (
+                            None if was_imputed else raw_spectrum[row_index, frequency]
+                        ),
+                        "imputed_value_mv": (
+                            raw_spectrum[row_index, frequency] if was_imputed else None
+                        ),
+                        "was_imputed": was_imputed,
+                        "signed_deviation": (
+                            None if was_imputed else signed_scores[row_index, frequency]
+                        ),
+                        "anomaly_score": None if was_imputed else smoothed[frequency],
                         "is_suspicious": bool(marked[frequency]),
                     }
                 )
@@ -591,8 +950,10 @@ def predict_and_explain(
     classifier, explainer = _load_server_artifacts(
         str(classifier_path.resolve()), str(explainer_path.resolve())
     )
+    prepared, optimization_audit = optimize_imputed_spectra(classifier, prepared)
     prediction_with_confidence = prediction_frame(classifier, prepared)
     explanations, bands = explainer.explain(prepared, prediction_with_confidence)
+    explanations = attach_optimization_audit(explanations, optimization_audit)
     predictions = prediction_with_confidence[
         ["engine_id", "cylinder", "label", "severity"]
     ].copy()
@@ -602,7 +963,9 @@ def predict_and_explain(
 def predict_raw_data(classifier_path: Path, raw_frame: pd.DataFrame) -> pd.DataFrame:
     """Kompatybilna inferencja klasyfikatora bez uruchamiania explainera."""
     prepared = interpolate_raw_spectra(raw_frame)
-    return prediction_frame(load_exported_model(classifier_path), prepared)[
+    classifier = load_exported_model(classifier_path)
+    prepared, _ = optimize_imputed_spectra(classifier, prepared)
+    return prediction_frame(classifier, prepared)[
         ["engine_id", "cylinder", "label", "severity"]
     ].copy()
 
@@ -723,6 +1086,7 @@ def main() -> None:
     classifier = ProbabilityEnsemble([*fold_models, final_model])
     export_model(classifier, args.model_output)
 
+    test, optimization_audit = optimize_imputed_spectra(classifier, test)
     prediction_with_confidence = prediction_frame(classifier, test)
     args.predictions_output.parent.mkdir(parents=True, exist_ok=True)
     prediction_with_confidence[
@@ -734,6 +1098,7 @@ def main() -> None:
     explainer = SpectralVerdictExplainer().fit(validation)
     export_explainer(explainer, args.explainer_output)
     explanations, bands = explainer.explain(test, prediction_with_confidence)
+    explanations = attach_optimization_audit(explanations, optimization_audit)
     args.explanations_output.parent.mkdir(parents=True, exist_ok=True)
     args.bands_output.parent.mkdir(parents=True, exist_ok=True)
     explanations.to_csv(args.explanations_output, index=False)
