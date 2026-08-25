@@ -175,12 +175,24 @@
                         <select id="employeeFilter"></select>
                     </label>
                     <div class="todo-status-filter" role="group" aria-label="Filtr statusu">
-                        <button type="button" class="active" data-todo-filter="all">Wszystkie</button>
-                        <button type="button" data-todo-filter="todo">Do zrobienia</button>
-                        <button type="button" data-todo-filter="in_progress">W trakcie</button>
-                        <button type="button" data-todo-filter="done">Skończone</button>
+                        <button type="button" class="active" data-todo-filter="all" aria-pressed="true">Wszystkie</button>
+                        <button type="button" data-todo-filter="todo" aria-pressed="false">Do zrobienia</button>
+                        <button type="button" data-todo-filter="in_progress" aria-pressed="false">W trakcie</button>
+                        <button type="button" data-todo-filter="done" aria-pressed="false">Skończone</button>
                     </div>
                 </div>
+                <output id="activeTodoFilter" class="active-todo-filter" aria-live="polite">Wybrany filtr: Wszystkie</output>
+                <section id="employeeDirectory" class="employee-directory" aria-labelledby="employeeDirectoryTitle" hidden>
+                    <div class="employee-directory-header">
+                        <div>
+                            <p class="panel-kicker">TWÓJ ZESPÓŁ</p>
+                            <h2 id="employeeDirectoryTitle">Pracownicy</h2>
+                        </div>
+                        <button type="button" id="directoryAddEmployeeButton" class="secondary-button">+ Dodaj pracownika</button>
+                    </div>
+                    <div id="employeeList" class="employee-list"></div>
+                    <p id="employeeListEmpty" class="todo-empty" hidden>Nie masz jeszcze żadnych pracowników.</p>
+                </section>
                 <div id="employeeSummary" class="employee-summary" hidden></div>
                 <div id="todoBoard" class="todo-board" aria-live="polite"></div>
                 <p id="todoEmpty" class="todo-empty" hidden>Brak zadań dla wybranego filtra.</p>
@@ -233,6 +245,25 @@
             <label><span>Hasło startowe</span><input id="employeePassword" type="password" minlength="8" maxlength="256" required autocomplete="new-password"></label>
             <p id="employeeMessage" class="form-message" aria-live="polite"></p>
             <button type="submit" class="primary-button">Utwórz konto pracownika</button>
+        </form>
+    </dialog>
+
+    <dialog id="employeePasswordDialog" class="app-dialog">
+        <form id="employeePasswordForm">
+            <input id="passwordEmployeeId" type="hidden">
+            <div class="dialog-header">
+                <div>
+                    <p class="panel-kicker">BEZPIECZEŃSTWO</p>
+                    <h2>Zmień hasło pracownika</h2>
+                </div>
+                <button type="button" class="dialog-close" data-close-dialog="employeePasswordDialog" aria-label="Zamknij">×</button>
+            </div>
+            <p id="passwordEmployeeName" class="dialog-help"></p>
+            <label><span>Nowe hasło</span><input id="newEmployeePassword" type="password" minlength="8" maxlength="256" required autocomplete="new-password"></label>
+            <label><span>Powtórz nowe hasło</span><input id="confirmEmployeePassword" type="password" minlength="8" maxlength="256" required autocomplete="new-password"></label>
+            <p class="dialog-help">Zmiana hasła wyloguje pracownika ze wszystkich aktywnych sesji.</p>
+            <p id="employeePasswordMessage" class="form-message" aria-live="polite"></p>
+            <button type="submit" class="primary-button">Zapisz nowe hasło</button>
         </form>
     </dialog>
 
